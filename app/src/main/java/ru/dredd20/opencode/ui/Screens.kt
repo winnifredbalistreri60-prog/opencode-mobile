@@ -1,5 +1,6 @@
 package ru.dredd20.opencode.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,27 +10,38 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import ru.dredd20.opencode.BuildConfig
 import ru.dredd20.opencode.i18n.tr
 import ru.dredd20.opencode.prefs.AppPrefs
 import ru.dredd20.opencode.prefs.RuntimeMode
 import ru.dredd20.opencode.runtime.OpenCodeRelease
-import ru.dredd20.opencode.runtime.RuntimeService
+import ru.dredd20.opencode.serve.CleartextPolicy
 
 @Composable
 fun SetupScreen(
@@ -45,21 +57,29 @@ fun SetupScreen(
     Column(
         modifier = modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("OpenCode Mobile", style = MaterialTheme.typography.headlineMedium)
-        Text(tr("Неофициальный клиент, не продукт команды OpenCode.", "Unofficial client, not a product of the OpenCode team."), style = MaterialTheme.typography.bodyMedium)
-        Text(tr("Будет скачан Ubuntu 24.04 и официальный OpenCode ${OpenCodeRelease.VERSION} (проверка sha256). Затем поднимется локальный сервер.", "This will download Ubuntu 24.04 and official OpenCode ${OpenCodeRelease.VERSION} (sha256 verified), then start a local server."), style = MaterialTheme.typography.bodyMedium)
+        Text("OpenCode Mobile", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.fillMaxWidth())
+        Text(tr("Неофициальный клиент, не продукт команды OpenCode.", "Unofficial client, not a product of the OpenCode team."), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth())
+        Text(
+            tr(
+                "Будет скачан Ubuntu 24.04 и официальный OpenCode ${OpenCodeRelease.VERSION} (проверка sha256). Нужен интернет. Загрузка около 150 МБ, на диске после установки около 800 МБ. Затем поднимется локальный сервер.",
+                "This will download Ubuntu 24.04 and official OpenCode ${OpenCodeRelease.VERSION} (sha256 verified). Internet is required. About 150 MB download and about 800 MB on disk after setup, then a local server is started.",
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth(),
+        )
         if (installing || progressPct > 0) {
             LinearProgressIndicator(progress = { (progressPct.coerceIn(0, 100)) / 100f }, modifier = Modifier.fillMaxWidth())
-            Text("$progressPct%  $message")
+            Text("$progressPct%  $message", modifier = Modifier.fillMaxWidth())
         }
         if (error != null) {
-            Text(error, color = MaterialTheme.colorScheme.error)
-            Button(onClick = onRetry) { Text(tr("Повторить", "Retry")) }
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth())
+            Button(onClick = onRetry, modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()) { Text(tr("Повторить", "Retry")) }
         } else if (!installing) {
-            Button(onClick = onInstall, modifier = Modifier.fillMaxWidth()) { Text(tr("Установить", "Install")) }
+            Button(onClick = onInstall, modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()) { Text(tr("Установить", "Install")) }
         } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 CircularProgressIndicator(modifier = Modifier.height(24.dp).width(24.dp))
                 Spacer(Modifier.width(12.dp))
                 Text(tr("Установка… не выключайте устройство.", "Installing… keep the device awake."))
@@ -101,18 +121,46 @@ fun SettingsScreen(
     onAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showLogs by remember { mutableStateOf(twoPane) }
+    var showPassword by remember { mutableStateOf(false) }
     val controls: @Composable () -> Unit = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(tr("Режим", "Mode"), style = MaterialTheme.typography.titleMedium)
             ModeRow(tr("Встроенный (по умолчанию)", "Embedded (default)"), mode == RuntimeMode.EMBEDDED) { onMode(RuntimeMode.EMBEDDED) }
             ModeRow(tr("Termux", "Termux"), mode == RuntimeMode.TERMUX) { onMode(RuntimeMode.TERMUX) }
             ModeRow(tr("Удалённый сервер", "Remote server"), mode == RuntimeMode.REMOTE) { onMode(RuntimeMode.REMOTE) }
             if (mode == RuntimeMode.REMOTE) {
-                OutlinedTextField(remoteUrl, onRemoteUrl, label = { Text("URL") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(remoteUser, onRemoteUser, label = { Text(tr("Логин", "Username")) }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(remotePassword, onRemotePassword, label = { Text(tr("Пароль", "Password")) }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(remoteUrl, onRemoteUrl, label = { Text("URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                if (CleartextPolicy.shouldWarnCleartext(remoteUrl)) {
+                    Text(
+                        tr(
+                            "Это незашифрованный HTTP. Трафик (включая пароль) может быть виден в сети. Для публичного интернета используйте HTTPS. Для домашней сети это обычный режим opencode serve.",
+                            "This is unencrypted HTTP. Traffic (including the password) may be visible on the network. Use HTTPS on the public internet. On a home LAN this is normal for opencode serve.",
+                        ),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                OutlinedTextField(remoteUser, onRemoteUser, label = { Text(tr("Логин", "Username")) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(
+                    remotePassword,
+                    onRemotePassword,
+                    label = { Text(tr("Пароль", "Password")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        TextButton(onClick = { showPassword = !showPassword }) {
+                            Text(if (showPassword) tr("Скрыть", "Hide") else tr("Показать", "Show"))
+                        }
+                    },
+                )
             }
             Text("$phase — $message", style = MaterialTheme.typography.bodySmall)
+            if (phase == "STOPPING") {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!running) Button(onClick = onStart) { Text(tr("Запустить", "Start")) }
                 else OutlinedButton(onClick = onStop) { Text(tr("Стоп", "Stop")) }
@@ -120,14 +168,19 @@ fun SettingsScreen(
             }
             Text(tr("Доступы телефона", "Phone access"), style = MaterialTheme.typography.titleMedium)
             CategoryToggle(tr("Датчики и батарея", "Sensors and battery"), categories[AppPrefs.CAT_SENSORS] == true) { onCategory(AppPrefs.CAT_SENSORS, it) }
-            CategoryToggle(tr("Геолокация и Wi‑Fi info", "Location and Wi‑Fi info"), categories[AppPrefs.CAT_LOCATION] == true) { onCategory(AppPrefs.CAT_LOCATION, it) }
-            CategoryToggle(tr("Камера", "Camera"), categories[AppPrefs.CAT_CAMERA] == true) { onCategory(AppPrefs.CAT_CAMERA, it) }
-            CategoryToggle(tr("Буфер обмена", "Clipboard"), categories[AppPrefs.CAT_CLIPBOARD] == true) { onCategory(AppPrefs.CAT_CLIPBOARD, it) }
+            CategoryToggle(tr("Геолокация и Wi‑Fi info (выкл. по умолчанию)", "Location and Wi‑Fi info (off by default)"), categories[AppPrefs.CAT_LOCATION] == true) { onCategory(AppPrefs.CAT_LOCATION, it) }
+            CategoryToggle(tr("Камера (выкл. по умолчанию)", "Camera (off by default)"), categories[AppPrefs.CAT_CAMERA] == true) { onCategory(AppPrefs.CAT_CAMERA, it) }
+            CategoryToggle(tr("Буфер обмена (выкл. по умолчанию)", "Clipboard (off by default)"), categories[AppPrefs.CAT_CLIPBOARD] == true) { onCategory(AppPrefs.CAT_CLIPBOARD, it) }
             CategoryToggle(tr("Уведомления и toast", "Notifications and toasts"), categories[AppPrefs.CAT_NOTIFY] == true) { onCategory(AppPrefs.CAT_NOTIFY, it) }
-            CategoryToggle(tr("Система (вибрация, фонарик, TTS, громкость, share)", "System (vibrate, torch, TTS, volume, share)"), categories[AppPrefs.CAT_SYSTEM] == true) { onCategory(AppPrefs.CAT_SYSTEM, it) }
+            CategoryToggle(tr("Система (вибрация, фонарик, TTS, громкость, share, набор номера)", "System (vibrate, torch, TTS, volume, share, dialer)"), categories[AppPrefs.CAT_SYSTEM] == true) { onCategory(AppPrefs.CAT_SYSTEM, it) }
             CategoryToggle(tr("USB", "USB"), categories[AppPrefs.CAT_USB] == true) { onCategory(AppPrefs.CAT_USB, it) }
             CategoryToggle(tr("Связь: SMS и контакты (выкл. по умолчанию)", "Messaging: SMS and contacts (off by default)"), categories[AppPrefs.CAT_COMMS] == true) { onCategory(AppPrefs.CAT_COMMS, it) }
             TextButton(onClick = onAbout) { Text(tr("О приложении и лицензии", "About and licenses")) }
+            if (!twoPane) {
+                TextButton(onClick = { showLogs = !showLogs }) {
+                    Text(if (showLogs) tr("Скрыть журнал", "Hide log") else tr("Показать журнал", "Show log"))
+                }
+            }
         }
     }
     val logPane: @Composable () -> Unit = {
@@ -138,23 +191,29 @@ fun SettingsScreen(
     }
     if (twoPane) {
         Row(modifier.fillMaxSize().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            Column(Modifier.weight(1f)) { controls() }
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { controls() }
             Column(Modifier.weight(1f).fillMaxSize()) { logPane() }
         }
     } else {
-        Column(modifier.fillMaxSize().padding(16.dp)) {
-            Column(Modifier.weight(1f)) { controls() }
-            Spacer(Modifier.height(12.dp))
-            Column(Modifier.weight(1f)) { logPane() }
+        Column(modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            controls()
+            if (showLogs) {
+                Text(tr("Журнал", "Logs"), style = MaterialTheme.typography.titleMedium)
+                Text(logs, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
 
 @Composable
 private fun ModeRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
         Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = selected, onCheckedChange = { if (it) onClick() })
+        RadioButton(selected = selected, onClick = onClick)
     }
 }
 
@@ -169,7 +228,7 @@ private fun CategoryToggle(label: String, checked: Boolean, onChange: (Boolean) 
 @Composable
 fun AboutScreen(text: String, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("OpenCode Mobile 0.1.0", style = MaterialTheme.typography.headlineSmall)
+        Text("OpenCode Mobile ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.headlineSmall)
         Text(tr("Неофициальный клиент, не продукт команды OpenCode.", "Unofficial client, not a product of the OpenCode team."))
         Text(text, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
     }

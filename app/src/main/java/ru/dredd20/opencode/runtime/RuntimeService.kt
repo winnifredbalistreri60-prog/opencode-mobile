@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.system.Os
 import android.system.OsConstants
+import ru.dredd20.opencode.serve.AgentEventWatcher
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -34,6 +35,7 @@ import ru.dredd20.opencode.serve.PortAllocator
 import ru.dredd20.opencode.serve.ServeCredentials
 import ru.dredd20.opencode.serve.ServeHealth
 import ru.dredd20.opencode.serve.ServeReuse
+import ru.dredd20.opencode.runtime.SecretFiles
 import ru.dredd20.opencode.serve.ServeState
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -47,6 +49,7 @@ class RuntimeService : Service() {
     private var installJob: Job? = null
     @Volatile private var stopRequested = false
     private var installOp = OP_INSTALL
+    private val agentWatcher = AgentEventWatcher(this)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -111,6 +114,7 @@ class RuntimeService : Service() {
                 val healthOk = existing != null && ServeHealth.check(existing.origin, existing.password).ok
                 if (ServeReuse.shouldReuse(existing, pidAlive, healthOk, null)) {
                     set(Phase.RUNNING, tr("Сервер уже запущен на порту ${existing!!.port}", "Server already running on port ${existing!!.port}"))
+                    agentWatcher.start(scope, existing.origin, existing.password)
                     // Keep the FGS up even though we didn't spawn; no process to wait on.
                     return@launch
                 }
@@ -121,14 +125,11 @@ class RuntimeService : Service() {
                     val password = ServeCredentials.randomPassword()
                     val log = File(EmbeddedRuntime.logsDir(this@RuntimeService), "svc.log")
                     if (log.length() > 5_000_000) log.renameTo(File(log.path + ".1"))
-                    val guest = ProotCommand.bash(
-                        "opencode serve --hostname 127.0.0.1 --port $port",
-                        mapOf("OPENCODE_PASSWORD" to password),
-                    )
+                    writeServePasswordFile(password)
+                    val guest = ProotCommand.bash(SecretFiles.serveCommand(port))
                     val p = EmbeddedRuntime.processBuilder(
                         this@RuntimeService,
                         guest,
-                        mapOf("OPENCODE_PASSWORD" to password),
                     ).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(log)).start()
                     p.outputStream.close()
                     process = p
@@ -138,6 +139,7 @@ class RuntimeService : Service() {
                         val st = ServeState(port = port, pid = pid, password = password, startedAt = System.currentTimeMillis())
                         ServeState.write(EmbeddedRuntime.stateFile(this@RuntimeService), st)
                         set(Phase.RUNNING, tr("Сервер слушает 127.0.0.1:$port", "Server listening on 127.0.0.1:$port"))
+                        agentWatcher.start(scope, st.origin, password)
                         val rc = p.waitFor()
                         if (process === p) {
                             process = null
@@ -175,11 +177,13 @@ class RuntimeService : Service() {
         set(Phase.STOPPING, tr("Остановка…", "Stopping…"))
         stopRequested = true
         installJob?.cancel()
+        agentWatcher.stop()
         val p = process
         if (p != null) killTree(p, graceSec = 8)
         process = null
         runCatching { PhoneApiService.stop(this) }
         EmbeddedRuntime.stateFile(this).delete()
+        servePasswordFile().delete()
         releaseWake()
         set(Phase.IDLE, tr("Остановлено", "Stopped"))
     }
@@ -256,6 +260,26 @@ class RuntimeService : Service() {
         else if (st.phase != Phase.ERROR) _state.value = State(Phase.IDLE, st.message, st.op)
         scope.cancel()
         super.onDestroy()
+    }
+
+
+    private fun servePasswordFile() = File(EmbeddedRuntime.runDir(this), "opencode-password")
+
+    private fun writeServePasswordFile(password: String) {
+        val f = servePasswordFile()
+        f.parentFile?.mkdirs()
+        val tmp = File(f.path + ".tmp")
+        tmp.writeText(SecretFiles.envFileBody(SecretFiles.SERVE_PASSWORD_ENV, password))
+        if (!tmp.renameTo(f)) {
+            f.writeText(SecretFiles.envFileBody(SecretFiles.SERVE_PASSWORD_ENV, password))
+            tmp.delete()
+        }
+        runCatching { Os.chmod(f.absolutePath, 384) } // 0600
+        f.setReadable(false, false)
+        f.setReadable(true, true)
+        f.setWritable(false, false)
+        f.setWritable(true, true)
+        f.setExecutable(false, false)
     }
 
     companion object {

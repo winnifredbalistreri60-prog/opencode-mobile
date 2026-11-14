@@ -78,11 +78,16 @@ class NotificationConfirmer(private val context: Context) : PhoneConfirmer {
     override fun requestPermission(permission: String) {
         PhonePending.permissionQueue.add(permission)
         context.sendBroadcast(Intent(ACTION_PERMISSION).setPackage(context.packageName).putExtra("permission", permission))
+        val launch = Intent(context, MainActivity::class.java)
+            .putExtra("request_permission", permission)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
         val open = PendingIntent.getActivity(
             context, permission.hashCode(),
-            Intent(context, MainActivity::class.java).putExtra("request_permission", permission),
+            launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        // If the activity is already visible, bring it up immediately so the system dialog can show.
+        runCatching { open.send() }
         PhoneApiService.ensureChannel(context)
         val n = NotificationCompat.Builder(context, PhoneApiService.NOTIFY_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_foreground)

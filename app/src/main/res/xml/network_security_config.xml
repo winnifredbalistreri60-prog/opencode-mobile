@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android domain-config cannot express CIDR, and a typical opencode serve on a
+  LAN machine is plain HTTP. Cleartext is therefore permitted app-wide; the UI
+  warns the user when they enter a non-HTTPS remote URL.
+  Loopback (127.0.0.1 / localhost) is used for the embedded server.
+-->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">127.0.0.1</domain>
-        <domain includeSubdomains="true">localhost</domain>
-    </domain-config>
-    <base-config cleartextTrafficPermitted="false">
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system"/>
         </trust-anchors>

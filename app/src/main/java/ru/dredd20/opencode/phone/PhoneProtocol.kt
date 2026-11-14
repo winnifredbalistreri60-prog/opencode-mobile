@@ -59,7 +59,7 @@ object PhoneProtocol {
         "sms-send", "sms-list", "contact-list",
     )
 
-    val DANGEROUS = setOf("telephony-call", "sms-send", "sms-list", "contact-list", "camera-photo", "open-url")
+    val DANGEROUS = setOf("sms-send", "sms-list", "contact-list", "camera-photo", "open-url")
 
     fun parse(line: String): PhoneRequest? = runCatching {
         val j = JSONObject(line)
@@ -83,7 +83,8 @@ object PhoneProtocol {
         "clipboard-get", "clipboard-set" -> "clipboard"
         "notification", "toast" -> "notify"
         "vibrate", "torch", "tts-speak", "volume" -> "system"
-        "sms-send", "sms-list", "contact-list", "telephony-call" -> "comms"
+        "sms-send", "sms-list", "contact-list" -> "comms"
+        "telephony-call" -> "system"
         "usb" -> "usb"
         "share", "open-url" -> "system"
         else -> null

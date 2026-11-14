@@ -105,6 +105,7 @@ object ProotCommand {
         )
         for ((k, v) in extra) {
             require(k.matches(Regex("[A-Z_][A-Z0-9_]*"))) { "bad env name $k" }
+            require(k !in SecretFiles.FORBIDDEN_IN_ARGV) { "secret $k must not be passed via argv; use a 0600 env file" }
             e += "$k=$v"
         }
         return e

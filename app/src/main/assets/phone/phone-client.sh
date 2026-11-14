@@ -54,10 +54,26 @@ print(json.dumps(args))
 PY
 )"
 
-TOKEN=""
-if [ -r "$TOKEN_FILE" ]; then TOKEN="$(tr -d '\n' < "$TOKEN_FILE")"; fi
 ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-REQ="$(python3 -c 'import json,sys; print(json.dumps({"v":1,"id":sys.argv[1],"token":sys.argv[2],"cmd":sys.argv[3],"args":json.loads(sys.argv[4])}))' "$ID" "$TOKEN" "$CMD" "$ARGS_JSON")"
+REQ="$(PHONE_TOKEN_FILE="$TOKEN_FILE" PHONE_CMD="$CMD" PHONE_ARGS_JSON="$ARGS_JSON" PHONE_ID="$ID" python3 - << 'REQPY'
+import json, os
+token = ""
+path = os.environ.get("PHONE_TOKEN_FILE") or ""
+if path:
+    try:
+        with open(path) as f:
+            token = f.read().strip()
+    except OSError:
+        token = ""
+print(json.dumps({
+    "v": 1,
+    "id": os.environ["PHONE_ID"],
+    "token": token,
+    "cmd": os.environ["PHONE_CMD"],
+    "args": json.loads(os.environ.get("PHONE_ARGS_JSON") or "{}"),
+}))
+REQPY
+)"
 
 RESP="$(PHONE_REQ="$REQ" python3 - "$SOCK" << 'PY'
 import os, socket, sys

@@ -36,7 +36,8 @@ class PhoneProtocolTest {
     fun categoriesAndDangerous() {
         assertEquals("comms", PhoneProtocol.categoryFor("sms-send"))
         assertEquals("camera", PhoneProtocol.categoryFor("camera-photo"))
-        assertTrue("telephony-call" in PhoneProtocol.DANGEROUS)
+        assertEquals("system", PhoneProtocol.categoryFor("telephony-call"))
+        assertFalse("telephony-call" in PhoneProtocol.DANGEROUS)
         assertTrue("battery-status" in PhoneProtocol.COMMANDS)
         assertFalse("eval" in PhoneProtocol.COMMANDS)
     }

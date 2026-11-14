@@ -14,6 +14,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import ru.dredd20.opencode.phone.PermissionRequests
+import ru.dredd20.opencode.prefs.AppVisibility
+import ru.dredd20.opencode.runtime.ProcTree
+import ru.dredd20.opencode.serve.ServeHealth
+import ru.dredd20.opencode.ui.WebViewSupport
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Column
@@ -85,8 +95,9 @@ class MainActivity : ComponentActivity() {
             if (clip != null) Array(clip.itemCount) { clip.getItemAt(it).uri }
             else intent.data?.let { arrayOf(it) }
         }
+        // OpenCodeWebView owns the ValueCallback; calling it twice crashes
+        // ("showFileChooser result was already called") on both pick and cancel.
         webHost?.onFileChosen(uris)
-        fileCallback?.onReceiveValue(uris)
         fileCallback = null
     }
 
@@ -129,9 +140,22 @@ class MainActivity : ComponentActivity() {
         handleSpecialIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        AppVisibility.resumed = true
+    }
+
+    override fun onPause() {
+        AppVisibility.resumed = false
+        super.onPause()
+    }
+
     private fun handleSpecialIntent(intent: Intent?) {
         val perm = intent?.getStringExtra("request_permission")
-        if (perm != null) permissionLauncher.launch(arrayOf(perm))
+        if (perm != null) {
+            permissionLauncher.launch(PermissionRequests.expand(listOf(perm)))
+            intent.removeExtra("request_permission")
+        }
         val picture = intent?.getStringExtra("take_picture")
         if (picture != null) {
             val dest = File(picture)
@@ -170,20 +194,62 @@ class MainActivity : ComponentActivity() {
             var dest by remember { mutableStateOf(initialDest()) }
             var tick by remember { mutableIntStateOf(0) }
             var confirmPrompt by remember { mutableStateOf<Pair<String, String>?>(null) }
+            var userMessage by remember { mutableStateOf<String?>(null) }
+            var askStopForUpdate by remember { mutableStateOf(false) }
+            var liveServe by remember { mutableStateOf<ServeState?>(null) }
             LaunchedEffect(Unit) {
                 while (true) {
                     delay(800)
                     tick++
                     PhonePending.asks.entries.firstOrNull()?.let { confirmPrompt = it.key to it.value.prompt }
+                    val pending = PhonePending.permissionQueue.toList()
+                    if (pending.isNotEmpty()) {
+                        PhonePending.permissionQueue.removeAll(pending.toSet())
+                        permissionLauncher.launch(PermissionRequests.expand(pending))
+                    }
                 }
             }
-            val mode = AppPrefs.mode(this)
-            val installed = EmbeddedRuntime.installed(this)
-            val serve = when (mode) {
-                RuntimeMode.EMBEDDED -> RuntimeService.currentServe(this)
-                RuntimeMode.TERMUX -> ru.dredd20.opencode.serve.ServeState.read(TermuxServe.stateFile(this))
-                RuntimeMode.REMOTE -> remoteState()
+            BackHandler(enabled = dest == Dest.Settings || dest == Dest.About) {
+                dest = if (EmbeddedRuntime.installed(this@MainActivity) || AppPrefs.mode(this@MainActivity) != RuntimeMode.EMBEDDED) Dest.Session else Dest.Setup
             }
+            // `tick` is read so prefs/files/progress recompose after install, start, or a mode change.
+            val mode = remember(tick, runtimeState) { AppPrefs.mode(this) }
+            val installed = remember(tick, runtimeState) { EmbeddedRuntime.installed(this) }
+            val rawServe = remember(tick, runtimeState, mode) {
+                when (mode) {
+                    RuntimeMode.EMBEDDED -> RuntimeService.currentServe(this)
+                    RuntimeMode.TERMUX -> ru.dredd20.opencode.serve.ServeState.read(TermuxServe.stateFile(this))
+                    RuntimeMode.REMOTE -> remoteState()
+                }
+            }
+            LaunchedEffect(rawServe?.port, rawServe?.pid, rawServe?.password, runtimeState.phase, mode) {
+                if (mode == RuntimeMode.REMOTE) {
+                    liveServe = rawServe
+                    return@LaunchedEffect
+                }
+                if (rawServe == null) {
+                    liveServe = null
+                    return@LaunchedEffect
+                }
+                if (mode == RuntimeMode.EMBEDDED && RuntimeService.running && runtimeState.phase == RuntimeService.Phase.RUNNING) {
+                    liveServe = rawServe
+                    return@LaunchedEffect
+                }
+                val ok = withContext(Dispatchers.IO) {
+                    val pidOk = rawServe.pid <= 0 || ProcTree.isAlive(rawServe.pid)
+                    val healthOk = pidOk && ServeHealth.check(rawServe.origin, rawServe.password).ok
+                    if (!healthOk) {
+                        when (mode) {
+                            RuntimeMode.EMBEDDED -> EmbeddedRuntime.stateFile(this@MainActivity).delete()
+                            RuntimeMode.TERMUX -> TermuxServe.stateFile(this@MainActivity).delete()
+                            else -> Unit
+                        }
+                    }
+                    healthOk
+                }
+                liveServe = if (ok) rawServe else null
+            }
+            val serve = liveServe
             if (dest == Dest.Setup && installed && mode == RuntimeMode.EMBEDDED && runtimeState.phase != RuntimeService.Phase.INSTALLING) {
                 dest = Dest.Session
             }
@@ -202,7 +268,7 @@ class MainActivity : ComponentActivity() {
                         actions = {
                             if (dest == Dest.Session) {
                                 IconButton(onClick = { dest = Dest.Settings }) {
-                                    Icon(Icons.Default.Settings, contentDescription = tr("Настройки", "Settings"))
+                                    Icon(Icons.Default.Settings, contentDescription = tr("Настройки приложения", "App settings"))
                                 }
                             }
                         },
@@ -226,28 +292,58 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     Dest.Session -> SessionPane(serve, widthDp, modifier = mod)
-                    Dest.Settings -> SettingsPane(mode, runtimeState, expanded, serve, onStart = {
+                    Dest.Settings -> SettingsPane(mode, runtimeState, expanded, serve, userMessage, onStart = {
+                        userMessage = null
                         when (AppPrefs.mode(this)) {
                             RuntimeMode.EMBEDDED -> RuntimeService.send(this, RuntimeService.ACTION_START)
-                            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.ensureRunning(this@MainActivity) }
-                            RuntimeMode.REMOTE -> Unit
+                            RuntimeMode.TERMUX -> lifecycleScope.launch {
+                                TermuxServe.ensureRunning(this@MainActivity).fold(
+                                    onSuccess = { userMessage = null },
+                                    onFailure = { userMessage = it.message ?: it.toString() },
+                                )
+                            }
+                            RuntimeMode.REMOTE -> {
+                                if (AppPrefs.remoteUrl(this).isBlank()) {
+                                    userMessage = tr("Укажите URL удалённого сервера", "Enter the remote server URL")
+                                } else {
+                                    dest = Dest.Session
+                                }
+                            }
                         }
                     }, onStop = {
                         when (AppPrefs.mode(this)) {
                             RuntimeMode.EMBEDDED -> RuntimeService.send(this, RuntimeService.ACTION_STOP)
                             RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity) }
-                            RuntimeMode.REMOTE -> Unit
+                            RuntimeMode.REMOTE -> dest = Dest.Session
                         }
-                    }, onUpdate = { RuntimeService.send(this, RuntimeService.ACTION_UPDATE) }, onAbout = { dest = Dest.About }, modifier = mod)
+                    }, onUpdate = {
+                        if (RuntimeService.running) askStopForUpdate = true
+                        else RuntimeService.send(this, RuntimeService.ACTION_UPDATE)
+                    }, onAbout = { dest = Dest.About }, modifier = mod)
                     Dest.About -> AboutScreen(aboutText(), modifier = mod)
                 }
                 confirmPrompt?.let { (id, prompt) ->
-                    androidx.compose.material3.AlertDialog(
+                    AlertDialog(
                         onDismissRequest = { PhonePending.complete(id, false); confirmPrompt = null },
                         title = { Text(tr("Подтверждение", "Confirm")) },
                         text = { Text(prompt) },
-                        confirmButton = { androidx.compose.material3.TextButton(onClick = { PhonePending.complete(id, true); confirmPrompt = null }) { Text(tr("Да", "Yes")) } },
-                        dismissButton = { androidx.compose.material3.TextButton(onClick = { PhonePending.complete(id, false); confirmPrompt = null }) { Text(tr("Нет", "No")) } },
+                        confirmButton = { TextButton(onClick = { PhonePending.complete(id, true); confirmPrompt = null }) { Text(tr("Да", "Yes")) } },
+                        dismissButton = { TextButton(onClick = { PhonePending.complete(id, false); confirmPrompt = null }) { Text(tr("Нет", "No")) } },
+                    )
+                }
+                if (askStopForUpdate) {
+                    AlertDialog(
+                        onDismissRequest = { askStopForUpdate = false },
+                        title = { Text(tr("Обновить OpenCode", "Update OpenCode")) },
+                        text = { Text(tr("Сначала нужно остановить сервер. Остановить и обновить?", "The server must be stopped first. Stop it and update?")) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                askStopForUpdate = false
+                                RuntimeService.send(this@MainActivity, RuntimeService.ACTION_STOP)
+                                RuntimeService.send(this@MainActivity, RuntimeService.ACTION_UPDATE)
+                            }) { Text(tr("Остановить и обновить", "Stop and update")) }
+                        },
+                        dismissButton = { TextButton(onClick = { askStopForUpdate = false }) { Text(tr("Отмена", "Cancel")) } },
                     )
                 }
             }
@@ -258,7 +354,12 @@ class MainActivity : ComponentActivity() {
     private fun SessionPane(serve: ServeState?, widthDp: Int, modifier: Modifier) {
         val mode = AppPrefs.mode(this)
         val host = webHost ?: return
-        if (mode == RuntimeMode.EMBEDDED && !RuntimeService.running && serve == null) {
+        val ru = java.util.Locale.getDefault().language == "ru"
+        val wvMajor = remember { host.webViewMajor() }
+        val canPolyfill = remember { host.canInjectDocumentStart() }
+        val block = WebViewSupport.blockingMessage(wvMajor, canPolyfill, ru)
+        val advice = WebViewSupport.advisoryMessage(wvMajor, ru)
+        if (mode == RuntimeMode.EMBEDDED && serve == null) {
             Column(modifier.padding(24.dp)) {
                 Text(tr("Сервер не запущен.", "The server is not running."), style = MaterialTheme.typography.bodyLarge)
                 androidx.compose.material3.Button(onClick = { RuntimeService.send(this@MainActivity, RuntimeService.ACTION_START) }) {
@@ -273,22 +374,39 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        if (mode == RuntimeMode.REMOTE && AppPrefs.remoteUrl(this).isBlank()) {
+            Column(modifier.padding(24.dp)) {
+                Text(tr("Укажите URL удалённого сервера в настройках приложения.", "Enter the remote server URL in app settings."))
+            }
+            return
+        }
+        if (block != null) {
+            Column(modifier.padding(24.dp)) {
+                Text(block, color = MaterialTheme.colorScheme.error)
+            }
+            return
+        }
         val origin = if (mode == RuntimeMode.REMOTE) AppPrefs.remoteUrl(this).trimEnd('/') else serve!!.origin
         val user = if (mode == RuntimeMode.REMOTE) AppPrefs.remoteUser(this) else ServeCredentials.USERNAME
         val pass = if (mode == RuntimeMode.REMOTE) AppPrefs.remotePassword(this) else serve!!.password
-        AndroidView(
-            modifier = modifier.fillMaxSize(),
-            factory = {
-                host.detachFromParent()
-                host.applyViewport(widthDp)
-                if (origin.isNotBlank()) host.bind(origin, user, pass)
-                host
-            },
-            update = {
-                it.applyViewport(widthDp)
-                if (origin.isNotBlank()) it.bind(origin, user, pass)
-            },
-        )
+        Column(modifier.fillMaxSize()) {
+            if (advice != null) {
+                Text(advice, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            }
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = {
+                    host.detachFromParent()
+                    host.applyViewport(widthDp)
+                    if (origin.isNotBlank()) host.bind(origin, user, pass, forceReload = true)
+                    host
+                },
+                update = {
+                    it.applyViewport(widthDp)
+                    if (origin.isNotBlank()) it.bind(origin, user, pass)
+                },
+            )
+        }
     }
 
     @Composable
@@ -297,6 +415,7 @@ class MainActivity : ComponentActivity() {
         runtimeState: RuntimeService.State,
         expanded: Boolean,
         serve: ServeState?,
+        userMessage: String?,
         onStart: () -> Unit,
         onStop: () -> Unit,
         onUpdate: () -> Unit,
@@ -309,7 +428,7 @@ class MainActivity : ComponentActivity() {
         val cats = listOf(
             AppPrefs.CAT_SENSORS, AppPrefs.CAT_LOCATION, AppPrefs.CAT_CAMERA, AppPrefs.CAT_CLIPBOARD,
             AppPrefs.CAT_NOTIFY, AppPrefs.CAT_SYSTEM, AppPrefs.CAT_USB, AppPrefs.CAT_COMMS,
-        ).associateWith { AppPrefs.categoryEnabled(this, it, it != AppPrefs.CAT_COMMS) }
+        ).associateWith { AppPrefs.categoryEnabled(this, it) }
         var catState by remember { mutableStateOf(cats) }
         val logs = listOf("runtime-state.log", "install.log", "svc.log", "phone.log").joinToString("\n\n") {
             val body = EmbeddedRuntime.readLog(this, it, 6_000)
@@ -326,7 +445,11 @@ class MainActivity : ComponentActivity() {
             onRemotePassword = { pass = it; AppPrefs.setRemotePassword(this, it) },
             running = RuntimeService.running || (serve != null && mode != RuntimeMode.EMBEDDED),
             phase = runtimeState.phase.name,
-            message = runtimeState.message + (serve?.let { tr("  порт ${it.port}", "  port ${it.port}") } ?: ""),
+            message = listOfNotNull(
+                userMessage,
+                runtimeState.message.takeIf { it.isNotBlank() },
+                serve?.let { tr("порт ${it.port}", "port ${it.port}") },
+            ).distinct().joinToString(" · "),
             categories = catState,
             onCategory = { k, v -> AppPrefs.setCategoryEnabled(this, k, v); catState = catState + (k to v) },
             logs = logs,
@@ -348,7 +471,7 @@ class MainActivity : ComponentActivity() {
     private fun titleFor(d: Dest) = when (d) {
         Dest.Setup -> tr("Установка", "Setup")
         Dest.Session -> "OpenCode Mobile"
-        Dest.Settings -> tr("Настройки", "Settings")
+        Dest.Settings -> tr("Настройки приложения", "App settings")
         Dest.About -> tr("О приложении", "About")
         Dest.Unsupported -> tr("Не поддерживается", "Unsupported")
     }

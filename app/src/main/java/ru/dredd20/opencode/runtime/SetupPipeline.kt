@@ -41,7 +41,8 @@ class SetupPipeline(
             fail(1, "rootfs", tr("Сначала установите среду", "Install the environment first"))
         }
 
-        installOpenCode(c, artifact, cancelled)
+        selfTestProot(c)
+        installOpenCode(c, artifact, cancelled, force = updateCliOnly)
         if (cancelled()) throw java.util.concurrent.CancellationException("cancelled")
         installAptAndHelpers(c, cancelled)
         writeConfig(c)
@@ -99,12 +100,46 @@ class SetupPipeline(
         progress("running", 38, "rootfs", tr("Ubuntu распакована (${img.name})", "Ubuntu unpacked (${img.name})"))
     }
 
-    private fun installOpenCode(c: Context, artifact: OpenCodeRelease.Artifact, cancelled: () -> Boolean) {
+    /**
+     * First proot launch, same as MURF: try with seccomp, and only then write host/noseccomp
+     * and retry. Never set PROOT_NO_SECCOMP unconditionally.
+     */
+    private fun selfTestProot(c: Context) {
+        progress("running", 39, "proot", tr("Проверка proot", "Checking proot"))
+        val flag = EmbeddedRuntime.noSeccompFlag(c)
+        flag.delete()
+        var r = kotlinx.coroutines.runBlocking {
+            EmbeddedRuntime.exec(c, listOf("/bin/sh", "-c", "uname -a; test -w /tmp"), 60_000)
+        }
+        if (!r.ok) {
+            EmbeddedRuntime.appendLog(c, "install.log", "proot self-test failed: ${r.combined().take(500)}; retry PROOT_NO_SECCOMP=1")
+            flag.parentFile?.mkdirs()
+            flag.writeText("1\n")
+            r = kotlinx.coroutines.runBlocking {
+                EmbeddedRuntime.exec(c, listOf("/bin/sh", "-c", "uname -a; test -w /tmp"), 60_000)
+            }
+            if (!r.ok) {
+                flag.delete()
+                fail(39, "proot", tr("proot не запускается: ${r.combined().take(300)}", "proot does not start: ${r.combined().take(300)}"))
+            }
+        }
+        EmbeddedRuntime.appendLog(c, "install.log", "proot ok: " + r.stdout.trim().replace('\n', ' '))
+    }
+
+    private fun installOpenCode(c: Context, artifact: OpenCodeRelease.Artifact, cancelled: () -> Boolean, force: Boolean = false) {
+        val destDir = File(EmbeddedRuntime.rootfsDir(c), "usr/local/bin")
+        val dest = File(destDir, "opencode")
+        val marker = File(EmbeddedRuntime.rootfsDir(c), EmbeddedRuntime.SETUP_MARKER)
+        val already = dest.isFile && dest.canExecute() &&
+            marker.isFile && marker.readText().trim().startsWith(OpenCodeRelease.VERSION)
+        if (already && !force) {
+            progress("running", 76, "cli", tr("OpenCode ${OpenCodeRelease.VERSION} уже установлен, загрузка пропущена", "OpenCode ${OpenCodeRelease.VERSION} already installed, skipping download"))
+            return
+        }
         progress("running", 40, "cli", tr("Загрузка OpenCode ${OpenCodeRelease.VERSION} (${artifact.name})", "Downloading OpenCode ${OpenCodeRelease.VERSION} (${artifact.name})"))
         val tarball = File(EmbeddedRuntime.cacheDir(c), artifact.name)
         download("cli", tarball, OpenCodeRelease.url(artifact), artifact.sha256, 40, 70, cancelled)
         progress("running", 72, "cli", tr("Установка бинарника OpenCode", "Installing the OpenCode binary"))
-        val destDir = File(EmbeddedRuntime.rootfsDir(c), "usr/local/bin")
         destDir.mkdirs()
         val extractTo = File(EmbeddedRuntime.cacheDir(c), "cli-unpack").apply { if (exists()) EmbeddedRuntime.deleteTree(this); mkdirs() }
         try {

@@ -38,9 +38,15 @@ class PhoneApiService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
+        if (intent?.action == ACTION_STOP) {
+            // Must not be started via startForegroundService; stop() uses startService.
+            stopSelf(); return START_NOT_STICKY
+        }
+        // startForeground must be called before any early return or stopSelf
+        // (Android throws RemoteServiceException otherwise).
         goForeground()
         if (running.compareAndSet(false, true)) startLoop()
+        goForeground() // refresh text after the socket is bound
         return START_STICKY
     }
 
@@ -85,8 +91,7 @@ class PhoneApiService : Service() {
         if (!PhoneProtocol.tokenOk(req.token, token)) return PhoneResponse.error(req.id, "unauthorized")
         val cat = PhoneProtocol.categoryFor(req.cmd)
         if (cat != null) {
-            val defaultOn = cat != AppPrefs.CAT_COMMS
-            if (!AppPrefs.categoryEnabled(this, cat, defaultOn)) {
+            if (!AppPrefs.categoryEnabled(this, cat)) {
                 return PhoneResponse.error(req.id, tr("категория $cat выключена в настройках", "category $cat is disabled in settings"))
             }
         }
@@ -102,7 +107,7 @@ class PhoneApiService : Service() {
         val n = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(tr("Phone API", "Phone API"))
-            .setContentText(tr("Локальный сокет /run/phone.sock", "Local socket /run/phone.sock"))
+            .setContentText(socketDescription())
             .setOngoing(true)
             .setContentIntent(open)
             .build()
@@ -117,7 +122,17 @@ class PhoneApiService : Service() {
         super.onDestroy()
     }
 
+    private fun socketDescription(): String {
+        val s = server
+        return when {
+            s == null -> tr("Запуск сокета…", "Starting socket…")
+            s.usesFilesystem -> tr("Сокет /run/phone.sock", "Socket /run/phone.sock")
+            else -> tr("Абстрактный сокет @${UnixSocketServer.ABSTRACT_NAME}", "Abstract socket @${UnixSocketServer.ABSTRACT_NAME}")
+        }
+    }
+
     companion object {
+
         const val ACTION_STOP = "ru.dredd20.opencode.PHONE_STOP"
         const val CHANNEL = "opencode_phone"
         const val NOTIFY_CHANNEL = "opencode_phone_events"

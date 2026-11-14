@@ -54,7 +54,11 @@ object EmbeddedRuntime {
     fun installed(c: Context): Boolean =
         rootfsReady(c) && File(rootfsDir(c), SETUP_MARKER).isFile && File(rootfsDir(c), "usr/local/bin/opencode").exists()
 
-    fun noSeccomp(c: Context) = File(hostDir(c), "noseccomp").isFile || true // default on: Android seccomp + proot is flaky
+    /** Like MURF: PROOT_NO_SECCOMP only when host/noseccomp exists (set after a failed self-test). */
+    fun noSeccomp(c: Context) = File(hostDir(c), "noseccomp").isFile
+
+    fun noSeccompFlag(c: Context) = File(hostDir(c), "noseccomp")
+
 
     fun freeMb(c: Context): Long = runCatching { StatFs(c.filesDir.path).availableBytes / (1024 * 1024) }.getOrDefault(-1)
 

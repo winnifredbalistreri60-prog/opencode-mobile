@@ -24,8 +24,13 @@ object AppPrefs {
     fun setupDone(c: Context) = p(c).getBoolean("setup_done", false)
     fun setSetupDone(c: Context, v: Boolean) = p(c).edit().putBoolean("setup_done", v).apply()
 
-    /** Category toggles. comms (SMS/contacts) default off. */
-    fun categoryEnabled(c: Context, key: String, default: Boolean = true): Boolean =
+    /** Sensitive categories default off so a freshly installed agent cannot use them. */
+    fun categoryDefault(key: String): Boolean = when (key) {
+        CAT_LOCATION, CAT_CAMERA, CAT_CLIPBOARD, CAT_COMMS -> false
+        else -> true
+    }
+
+    fun categoryEnabled(c: Context, key: String, default: Boolean = categoryDefault(key)): Boolean =
         p(c).getBoolean("cat_$key", default)
 
     fun setCategoryEnabled(c: Context, key: String, v: Boolean) =

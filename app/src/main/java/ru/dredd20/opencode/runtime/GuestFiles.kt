@@ -46,20 +46,21 @@ object GuestFiles {
         File(EmbeddedRuntime.rootfsDir(c), "root/.local/state/opencode").mkdirs()
         File(EmbeddedRuntime.rootfsDir(c), "root/.cache/opencode").mkdirs()
         File(EmbeddedRuntime.rootfsDir(c), "tmp").mkdirs()
-        File(cfgDir, "opencode.json").writeText(
-            """
-            {
-              "update": "disable",
-              "mcp": {
-                "servers": {
-                  "phone": {
-                    "type": "local",
-                    "command": ["phone-mcp"]
-                  }
-                }
+        File(cfgDir, "opencode.json").writeText(openCodeConfigJson())
+    }
+
+    fun openCodeConfigJson(): String =
+        """
+        {
+          "update": "disable",
+          "mcp": {
+            "servers": {
+              "phone": {
+                "type": "local",
+                "command": ["phone-mcp"]
               }
             }
-            """.trimIndent() + "\n",
-        )
-    }
+          }
+        }
+        """.trimIndent() + "\n"
 }

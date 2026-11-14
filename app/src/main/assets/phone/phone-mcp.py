@@ -118,8 +118,8 @@ def read_msg():
     return json.loads(line)
 
 def write_msg(msg):
-    body = json.dumps(msg, ensure_ascii=False)
-    sys.stdout.write("Content-Length: %d\r\n\r\n%s" % (len(body.encode()), body))
+    # OpenCode MCP stdio is JSON-RPC one object per line (not LSP Content-Length).
+    sys.stdout.write(json.dumps(msg, ensure_ascii=False) + chr(10))
     sys.stdout.flush()
 
 def handle(msg):
@@ -130,7 +130,7 @@ def handle(msg):
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": params.get("protocolVersion") or "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "phone-mcp", "version": "0.1.0"},
+            "serverInfo": {"name": "phone-mcp", "version": "0.1.1"},
         }}
     if method == "notifications/initialized":
         return None

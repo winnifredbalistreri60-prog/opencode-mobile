@@ -11,8 +11,8 @@ android {
         applicationId = "ru.dredd20.opencode"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         // Only arm64 and x86_64 have an official OpenCode binary. The APK still
@@ -22,10 +22,21 @@ android {
         }
     }
 
+    signingConfigs {
+        // Same debug key as 0.1.0 so 0.1.1 installs over it (SHA-256 65b96eb0…2a90).
+        // Never hook a MURF/release key.
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/debug-v0.1.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
-            // Default debug keystore only. Never hook a release/MURF key.
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = false
@@ -66,6 +77,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.service)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation(libs.androidx.webkit)
     implementation(libs.usb.serial)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
