@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity() {
         handleSpecialIntent(intent)
         setContent { App() }
         maybeAskNotifications()
+        ru.dredd20.opencode.update.AppUpdater.autoCheck(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -156,6 +157,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         AppVisibility.resumed = true
+        ru.dredd20.opencode.update.AppUpdater.onResume(this)
     }
 
     override fun onPause() {
@@ -383,6 +385,7 @@ class MainActivity : ComponentActivity() {
                         dismissButton = { TextButton(onClick = { askStopForUpdate = false }) { Text(tr("Отмена", "Cancel")) } },
                     )
                 }
+                ru.dredd20.opencode.update.UpdateDialog()
                 pendingMode?.let { next ->
                     AlertDialog(
                         onDismissRequest = { pendingMode = null },
@@ -499,7 +502,8 @@ class MainActivity : ComponentActivity() {
             AppPrefs.CAT_NOTIFY, AppPrefs.CAT_SYSTEM, AppPrefs.CAT_USB, AppPrefs.CAT_COMMS,
         ).associateWith { AppPrefs.categoryEnabled(this, it) }
         var catState by remember { mutableStateOf(cats) }
-        val logs = listOf("runtime-state.log", "install.log", "svc.log", "phone.log").joinToString("\n\n") {
+        var autoUpdate by remember { mutableStateOf(AppPrefs.updateAutoCheck(this)) }
+        val logs = listOf("runtime-state.log", "install.log", "svc.log", "phone.log", "update.log").joinToString("\n\n") {
             val body = EmbeddedRuntime.readLog(this, it, 6_000)
             if (body.isBlank()) "" else "--- $it ---\n$body"
         }
@@ -544,6 +548,10 @@ class MainActivity : ComponentActivity() {
             onUpdate = onUpdate,
             onAbout = onAbout,
             termuxHint = if (mode == RuntimeMode.TERMUX) Termux.instructions() else null,
+            updateAutoCheck = autoUpdate,
+            onUpdateAutoCheck = { autoUpdate = it; AppPrefs.setUpdateAutoCheck(this, it) },
+            onCheckUpdates = { ru.dredd20.opencode.update.AppUpdater.checkNow(this) },
+            updateSource = BuildConfig.UPDATE_SOURCE_LABEL,
             modifier = modifier,
         )
     }

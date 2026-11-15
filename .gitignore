@@ -16,3 +16,7 @@ __pycache__/
 keystore/
 *.keystore
 *.jks
+
+# Release assets produced by scripts/make-release.sh
+dist/
+*.idsig

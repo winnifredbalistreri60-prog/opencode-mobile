@@ -222,7 +222,7 @@ class SetupPipeline(
         } catch (e: java.util.concurrent.CancellationException) {
             throw e
         } catch (e: Exception) {
-            fail(pctFrom, step, tr("не скачать ${target.name} (повтор продолжит загрузку): ${e.message}", "cannot download ${target.name} (retry resumes): ${e.message}"))
+            fail(pctFrom, step, tr("не удалось скачать ${target.name} (повтор продолжит загрузку): ${e.message}", "cannot download ${target.name} (retry resumes): ${e.message}"))
         }
     }
 

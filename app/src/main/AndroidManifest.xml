@@ -22,6 +22,7 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS"/>
     <uses-permission android:name="com.termux.permission.RUN_COMMAND"/>
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- Optional, off by default in settings -->
     <uses-permission android:name="android.permission.READ_CONTACTS"/>
     <uses-permission android:name="android.permission.READ_SMS"/>
@@ -93,6 +94,10 @@
 
         <receiver
             android:name=".phone.PhoneConfirmReceiver"
+            android:exported="false"/>
+
+        <receiver
+            android:name=".update.UpdateInstallReceiver"
             android:exported="false"/>
 
         <provider

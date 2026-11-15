@@ -120,6 +120,10 @@ fun SettingsScreen(
     onUpdate: () -> Unit,
     onAbout: () -> Unit,
     termuxHint: String? = null,
+    updateAutoCheck: Boolean = true,
+    onUpdateAutoCheck: (Boolean) -> Unit = {},
+    onCheckUpdates: () -> Unit = {},
+    updateSource: String = "",
     modifier: Modifier = Modifier,
 ) {
     var showLogs by remember { mutableStateOf(twoPane) }
@@ -179,6 +183,13 @@ fun SettingsScreen(
             CategoryToggle(tr("Система (вибрация, фонарик, TTS, громкость, share, набор номера)", "System (vibrate, torch, TTS, volume, share, dialer)"), categories[AppPrefs.CAT_SYSTEM] == true) { onCategory(AppPrefs.CAT_SYSTEM, it) }
             CategoryToggle(tr("USB", "USB"), categories[AppPrefs.CAT_USB] == true) { onCategory(AppPrefs.CAT_USB, it) }
             CategoryToggle(tr("Связь: SMS и контакты (выкл. по умолчанию)", "Messaging: SMS and contacts (off by default)"), categories[AppPrefs.CAT_COMMS] == true) { onCategory(AppPrefs.CAT_COMMS, it) }
+            Text(tr("Обновления приложения", "App updates"), style = MaterialTheme.typography.titleMedium)
+            Text(
+                tr("Версия ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}). Источник: $updateSource", "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}). Source: $updateSource"),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            CategoryToggle(tr("Проверять обновления при запуске (не чаще раза в 6 ч)", "Check for updates on launch (at most every 6 h)"), updateAutoCheck, onUpdateAutoCheck)
+            OutlinedButton(onClick = onCheckUpdates) { Text(tr("Проверить обновления", "Check for updates")) }
             TextButton(onClick = onAbout) { Text(tr("О приложении и лицензии", "About and licenses")) }
             if (!twoPane) {
                 TextButton(onClick = { showLogs = !showLogs }) {

@@ -2,6 +2,19 @@
 
 All notable releases of this unofficial OpenCode Mobile client. The official OpenCode CLI remains a separate project ([anomalyco/opencode](https://github.com/anomalyco/opencode)).
 
+## 0.1.3 — 2026-11-15
+
+Debug build, versionCode 4. Same debug certificate as 0.1.0–0.1.2 (`65b96eb0…2a90`).
+
+- **In-app updates from GitHub Releases.** Manifest `opencode-mobile-version.json` from `releases/latest/download/…`, with the public GitHub API `releases/latest` as a fallback. No tokens.
+- Check on launch at most every 6 hours (switch in App settings → App updates) and a **Check for updates** button. Versions are compared by `versionCode`; “Later” hides that version from the automatic check.
+- Download with progress; size and sha256 checked; package name, `versionCode` and signing certificate must match the installed app. Any mismatch deletes the file and rejects the update.
+- Install through PackageInstaller. After “Allow from this source” is granted and you return to the app, the dialog switches from “Open settings” to “Install” by itself (fixes the MURF bug). Cancelling the system prompt keeps the verified file for another try. The local server is stopped before installing.
+- `scripts/make-release.sh`: builds the APK, verifies the certificate, writes the APK, `.sha256` and the manifest for a release. Publishes nothing.
+- Test-only Gradle properties `-PocmUpdateTestServer`, `-PocmVersionCode`, `-PocmVersionName` for update tests against a local HTTP server. Default builds point at GitHub.
+- Russian setup error text: “не удалось скачать …” instead of “не скачать …”.
+- 17 new unit tests (manifest parsing, URL allow-list, API fallback, versionCode comparison, 6 h throttle, sha256, signer match, install-button state). 68 tests in total.
+
 ## 0.1.2 — 2026-11-15
 
 Debug build, versionCode 3. Same debug certificate as 0.1.0 / 0.1.1 (`65b96eb0…2a90`).

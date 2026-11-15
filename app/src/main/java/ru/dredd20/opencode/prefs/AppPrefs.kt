@@ -24,6 +24,13 @@ object AppPrefs {
     fun setupDone(c: Context) = p(c).getBoolean("setup_done", false)
     fun setSetupDone(c: Context, v: Boolean) = p(c).edit().putBoolean("setup_done", v).apply()
 
+    fun updateAutoCheck(c: Context) = p(c).getBoolean("update_auto_check", true)
+    fun setUpdateAutoCheck(c: Context, v: Boolean) = p(c).edit().putBoolean("update_auto_check", v).apply()
+    fun updateLastCheck(c: Context) = p(c).getLong("update_last_check", 0L)
+    fun setUpdateLastCheck(c: Context, v: Long) = p(c).edit().putLong("update_last_check", v).apply()
+    fun updatePostponedCode(c: Context) = p(c).getInt("update_postponed_code", 0)
+    fun setUpdatePostponedCode(c: Context, v: Int) = p(c).edit().putInt("update_postponed_code", v).apply()
+
     /** Sensitive categories default off so a freshly installed agent cannot use them. */
     fun categoryDefault(key: String): Boolean = when (key) {
         CAT_LOCATION, CAT_CAMERA, CAT_CLIPBOARD, CAT_COMMS -> false

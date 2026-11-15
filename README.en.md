@@ -4,7 +4,7 @@ Unofficial Android client for [OpenCode](https://opencode.ai). **This is not a p
 
 The app runs the official Linux `opencode serve` binary (linux-arm64 or linux-x64) inside an Ubuntu 24.04 PRoot environment and shows the **official web UI** in a WebView. A built-in Phone API (Termux:API-compatible command names plus an MCP server named `phone`) lets the agent use device sensors and features.
 
-Package: `ru.dredd20.opencode`. Current release: **0.1.2** (versionCode 3). Builds in this tree are **debug**.
+Package: `ru.dredd20.opencode`. Current release: **0.1.3** (versionCode 4). Builds in this tree are **debug**.
 
 [Русский README](README.md) · [Changelog](CHANGELOG.md) · [Third-party notices](NOTICE)
 
@@ -15,6 +15,7 @@ Package: `ru.dredd20.opencode`. Current release: **0.1.2** (versionCode 3). Buil
 - Phone API and MCP `phone` (battery, sensors, torch, clipboard, toast, TTS, share, USB list, and more). Sensitive categories (location, camera, SMS/contacts) are off by default.
 - “Agent reply is ready” notification when the app is in the background and a turn finishes (`session.idle` / `session.execution.succeeded`).
 - Phone and tablet layouts (two-column settings at width ≥ 840 dp).
+- In-app updates from this repository's GitHub Releases (since 0.1.3): sha256 and signature checks, system installer.
 
 Intentionally **not** in v0.1: an in-app agent browser, raw USB fd passing (`termux-usb -e` / SCM_RIGHTS), release signing, or store publication.
 
@@ -22,7 +23,7 @@ Intentionally **not** in v0.1: an in-app agent browser, raw USB fd passing (`ter
 
 Distributed as a debug APK, not via Google Play. You can install over a previous 0.1.x build that uses the same signing certificate.
 
-1. Download `opencode-mobile-0.1.2-debug.apk` from [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (once a release is published) or build it yourself.
+1. Download `opencode-mobile-0.1.3.apk` from [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (once a release is published) or build it yourself.
 2. Allow installation from the chosen source and install the package.
 3. On the Setup screen, accept the unofficial-client disclaimer and tap **Install**. This needs a network connection and about 150 MB down / ~800 MB on disk (ubuntu-base + the OpenCode CLI).
 4. When you see “Ready: OpenCode 2.3.0”, tap **Start**. The official web UI opens.
@@ -31,7 +32,20 @@ You should not have to type the serve password into the page. Do not publish `se
 
 ### Upgrading
 
-0.1.2 installs over 0.1.1 / 0.1.0 when the certificate matches (SHA-256 `65b96eb07abe416771b1a8c96184d87641d2e1cf51954ec340d40d34b32d2a90` for these debug builds). The rootfs is kept. Phone API scripts are refreshed on every Start.
+**In-app (since 0.1.3).** On launch, at most every 6 hours, the app reads
+`https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases/latest/download/opencode-mobile-version.json`
+(fallback: the public GitHub API `releases/latest`, no token). When the manifest `versionCode` is higher than the
+installed one, a dialog appears. Manual check: **App settings → App updates → Check for updates**, next to the
+auto-check switch.
+
+Before installing, the app verifies that the APK URL belongs to this repository's releases, the size and sha256 from
+the manifest, the package name, `versionCode`, and that the signing certificate matches the installed app. Any mismatch
+deletes the file and rejects the update. Installation uses the system PackageInstaller, so Android asks for
+confirmation. Without the “Install unknown apps” permission, “Open settings” opens the right page; after you enable
+“Allow from this source” and come back, the dialog switches to “Install” by itself. The local server is stopped before
+installing. Data (rootfs, settings) is kept.
+
+**Manually.** 0.1.3 installs over 0.1.2 / 0.1.1 / 0.1.0 when the certificate matches (SHA-256 `65b96eb07abe416771b1a8c96184d87641d2e1cf51954ec340d40d34b32d2a90` for these debug builds). The rootfs is kept. Phone API scripts are refreshed on every Start.
 
 ### Termux mode
 
@@ -65,6 +79,13 @@ Or set `OPENCODE_DEBUG_KEYSTORE`. If neither is set, Gradle falls back to the de
 ```
 
 Do not commit `local.properties`, `*.keystore`, `*.jks`, or `build/` / `.gradle/` directories.
+
+### Cutting a release (maintainers)
+
+`scripts/make-release.sh` builds the APK, checks the signing certificate, computes sha256, and writes
+`dist/v<version>/opencode-mobile-<version>.apk`, `.sha256` and `opencode-mobile-version.json`. It publishes nothing.
+Upload both the APK and `opencode-mobile-version.json` to release `v<version>` and mark it latest.
+The script refuses test builds made with `-PocmUpdateTestServer=http://…` (local update server).
 
 ## Screenshots
 
