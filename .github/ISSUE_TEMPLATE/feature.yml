@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement for the unofficial Android client
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: This is an unofficial Android client. Features of official OpenCode itself should go to https://github.com/anomalyco/opencode.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing in the Android client today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

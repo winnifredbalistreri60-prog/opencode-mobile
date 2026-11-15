@@ -1,10 +1,89 @@
 # OpenCode Mobile
 
-Unofficial Android client for [OpenCode](https://opencode.ai). Not a product of the OpenCode team.
+Неофициальный Android-клиент для [OpenCode](https://opencode.ai). **Это не продукт команды OpenCode** и не связан с Anomaly / SST / opencode.ai.
 
-Local `opencode serve` (official linux-arm64 / linux-x64 glibc binary) runs in a
-PRoot Ubuntu 24.04 environment. The app shows the official web UI in a WebView.
-A built-in Phone API (Termux-compatible CLI names + MCP) gives the agent access
-to sensors and device features. The desktop agent browser is not in v0.1.
+Приложение поднимает официальный Linux-бинарник `opencode serve` (linux-arm64 или linux-x64) в среде Ubuntu 24.04 через PRoot и показывает **официальный веб-UI** во встроенном WebView. Есть встроенный Phone API (имена команд совместимы с Termux:API, плюс MCP-сервер `phone`), чтобы агент мог работать с датчиками и функциями устройства.
 
-See `NOTICE` for licenses. Debug builds only in this tree.
+Пакет: `ru.dredd20.opencode`. Текущий выпуск: **0.1.2** (versionCode 3). Сборки в этом дереве — **debug**.
+
+[English README](README.en.md) · [Список изменений](CHANGELOG.md) · [Лицензии третьих сторон](NOTICE)
+
+## Что умеет 0.1.x
+
+- Встроенный режим: Ubuntu 24.04 + официальный OpenCode 2.3.0 в PRoot, вход в веб-UI без ручного ввода пароля (нативный `/api/pair` + `/auth/connect/{code}`).
+- Режимы Termux и Remote (подключение к уже запущенному `opencode serve`).
+- Phone API и MCP `phone` (батарея, сенсоры, фонарик, буфер, toast, TTS, share, USB-список и др.). Чувствительные категории (геолокация, фото, SMS/контакты) по умолчанию выключены.
+- Уведомление «ответ агента готов», когда приложение в фоне и сессия завершила ход (`session.idle` / `session.execution.succeeded`).
+- Телефонный и планшетный layout (широкие настройки при ширине ≥ 840 dp).
+
+Намеренно **не** входит в v0.1: встроенный агентский браузер, передача raw USB fd (`termux-usb -e` / SCM_RIGHTS), release-подпись и публикация в магазинах.
+
+## Установка
+
+Распространяется как debug-APK, не через Google Play. Можно ставить поверх предыдущей 0.1.x с той же подписью.
+
+1. Скачайте `opencode-mobile-0.1.2-debug.apk` из [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (когда релиз будет опубликован) или соберите сами.
+2. Разрешите установку из неизвестного источника и установите пакет.
+3. На экране Setup подтвердите дисклеймер и нажмите **Install**. Нужны интернет и примерно 150 МБ сети / ~800 МБ на диске (ubuntu-base + OpenCode CLI).
+4. После «Ready: OpenCode 2.3.0» нажмите **Start**. Откроется официальный веб-UI.
+
+Пароль сервера **не** нужно вводить в страницу. Не публикуйте `serve-state.json`, `last-serve.json` и вывод `local.properties`.
+
+### Обновление
+
+0.1.2 ставится поверх 0.1.1 / 0.1.0, если сертификат тот же (SHA-256 `65b96eb07abe416771b1a8c96184d87641d2e1cf51954ec340d40d34b32d2a90` для этих debug-сборок). Данные rootfs сохраняются. Скрипты Phone API обновляются при каждом Start.
+
+### Режим Termux
+
+1. Установите Termux из F-Droid (или официальный APK под вашу ABI). Приложение Google Play Termux не подходит.
+2. В `~/.termux/termux.properties` добавьте `allow-external-apps=true` и выполните `termux-reload-settings`.
+3. Выдайте OpenCode Mobile разрешение `RUN_COMMAND`.
+4. В настройках приложения выберите режим Termux и Start. Если Termux не установлен, на экране будет инструкция, а не бесконечное «Waiting».
+
+При смене режима работающий сервер предыдущего режима останавливается (после подтверждения).
+
+### Удалённый сервер
+
+Укажите полный URL (`http://host:port` или `https://…`). Неполный адрес вроде `http://` не принимается. Для `http://` вне loopback показывается предупреждение о cleartext.
+
+## Сборка из исходников
+
+Нужны JDK 17+, Android SDK (API 35/36) и (для эмулятора) AVD x86_64.
+
+Debug-ключ **не** хранится в git. Положите keystore вне репозитория и укажите путь в игнорируемом `local.properties`:
+
+```
+sdk.dir=/path/to/android-sdk
+debug.keystore=/path/to/debug-v0.1.keystore
+```
+
+Либо задайте переменную окружения `OPENCODE_DEBUG_KEYSTORE`. Если файла нет, Gradle использует обычный debug-ключ Android (подпись не совпадёт с уже установленным 0.1.x).
+
+```bash
+./gradlew assembleDebug testDebugUnitTest
+# APK: app/build/outputs/apk/debug/app-debug.apk
+```
+
+Не коммитьте `local.properties`, `*.keystore`, `*.jks`, каталоги `build/` и `.gradle/`.
+
+## Скриншоты
+
+| Веб-UI после обновления | Ответ модели | Уведомление о готовом ответе |
+| --- | --- | --- |
+| ![web UI](docs/screenshots/webui.png) | ![PONG reply](docs/screenshots/chat-reply.png) | ![notification](docs/screenshots/notification.png) |
+
+## Документация
+
+- [CHANGELOG.md](CHANGELOG.md) — 0.1.0, 0.1.1, 0.1.2
+- [CHANGES.md](CHANGES.md) — подробности исправлений текущего выпуска по багам тестера
+- [TESTPLAN.md](TESTPLAN.md) — как проверять
+- [NOTICE](NOTICE) / [THIRD_PARTY.md](THIRD_PARTY.md) — третьи стороны
+- [LICENSE](LICENSE) — MIT, с атрибуцией [anomalyco/opencode](https://github.com/anomalyco/opencode)
+
+## Сообщения об ошибках
+
+Пожалуйста, используйте [шаблоны Issues](.github/ISSUE_TEMPLATE). Не прикладывайте пароли, keystore и `local.properties`. Ошибки самого CLI / веб-UI OpenCode лучше слать [upstream](https://github.com/anomalyco/opencode).
+
+## Лицензия
+
+Код клиента — MIT, © 2026 OpenCode Mobile contributors. OpenCode — MIT, © 2025 opencode / Anomaly. PRoot (форк Termux) — GPL-2.0-or-later; talloc — LGPL-3.0-or-later; подробности в `NOTICE`.

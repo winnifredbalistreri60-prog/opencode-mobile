@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Official OpenCode
+    url: https://github.com/anomalyco/opencode
+    about: This repo is an unofficial Android client. Bugs in the OpenCode CLI or web UI itself belong upstream.

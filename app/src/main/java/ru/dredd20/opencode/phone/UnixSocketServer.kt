@@ -2,6 +2,7 @@ package ru.dredd20.opencode.phone
 
 import android.net.LocalServerSocket
 import android.net.LocalSocket
+import android.net.LocalSocketAddress
 import android.os.Build
 import java.io.Closeable
 import java.io.File
@@ -23,11 +24,10 @@ class ClientConn(val input: InputStream, val output: OutputStream) : Closeable {
  * Phone API listen socket.
  *
  * Preferred: filesystem UNIX socket at [path] (bind-mounted into proot as /run/phone.sock).
- * The public android.jar stub may not expose [ServerSocketChannel.open] with a protocol
- * family, so we call it by reflection on API 33+.
+ * Fallback: abstract-namespace LocalServerSocket [ABSTRACT_NAME].
  *
- * Fallback: abstract-namespace LocalServerSocket [ABSTRACT_NAME]. Same-UID processes
- * inside proot can connect (kernel namespace; no bind-mount required).
+ * [close] unlinks the filesystem path and tries to wake a blocked [accept] so the
+ * previous instance can exit before a new bind.
  */
 class UnixSocketServer(private val path: File) : Closeable {
     private val running = AtomicBoolean(false)
@@ -36,8 +36,7 @@ class UnixSocketServer(private val path: File) : Closeable {
     val usesFilesystem: Boolean get() = fs != null
 
     fun start() {
-        path.parentFile?.mkdirs()
-        if (path.exists()) path.delete()
+        unlinkFilesystem()
         running.set(true)
         if (Build.VERSION.SDK_INT >= 33) {
             try {
@@ -45,15 +44,16 @@ class UnixSocketServer(private val path: File) : Closeable {
                 if (fs != null) return
             } catch (_: Exception) {
                 fs = null
-                if (path.exists()) path.delete()
+                unlinkFilesystem()
             }
         }
         abstract = LocalServerSocket(ABSTRACT_NAME)
     }
 
     fun accept(): ClientConn {
+        if (!running.get()) error("closed")
         fs?.let { ch ->
-            val c = ch.accept()
+            val c = ch.accept() ?: error("accept closed")
             return ClientConn(Channels.newInputStream(c), Channels.newOutputStream(c))
         }
         val s: LocalSocket = abstract?.accept() ?: error("not started")
@@ -62,13 +62,41 @@ class UnixSocketServer(private val path: File) : Closeable {
 
     fun isRunning(): Boolean = running.get()
 
+    /** Close the listen socket, unlink the file, and poke accept() so it returns. */
     override fun close() {
         running.set(false)
         runCatching { fs?.close() }
         runCatching { abstract?.close() }
+        wakeupBlockedAccept()
         fs = null
         abstract = null
+        unlinkFilesystem()
+    }
+
+    private fun unlinkFilesystem() {
         if (path.exists()) path.delete()
+    }
+
+    private fun wakeupBlockedAccept() {
+        // LocalServerSocket.close() does not always unblock accept() on Android.
+        // A short connecting client forces the accept loop to return.
+        runCatching {
+            LocalSocket().use { c ->
+                c.connect(
+                    LocalSocketAddress(ABSTRACT_NAME, LocalSocketAddress.Namespace.ABSTRACT),
+                    200,
+                )
+            }
+        }
+        runCatching {
+            if (path.exists() || path.parentFile?.exists() == true) {
+                val sock = java.net.Socket()
+                // Filesystem UNIX sockets are not TCP; a dummy LocalSocket to the path is enough.
+                LocalSocket().use { c ->
+                    c.connect(LocalSocketAddress(path.absolutePath), 200)
+                }
+            }
+        }
     }
 
     companion object {

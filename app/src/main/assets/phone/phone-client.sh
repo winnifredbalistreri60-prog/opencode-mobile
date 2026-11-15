@@ -42,6 +42,11 @@ if positional:
     args["argv"] = positional
     if cmd in ("toast", "tts-speak", "notification", "share", "open-url", "telephony-call", "clipboard-set") and "text" not in args:
         args["text"] = " ".join(positional)
+    if cmd in ("torch",) and positional:
+        v = positional[0].strip().lower()
+        args["on"] = v in ("on", "1", "true", "yes", "enable", "enabled")
+        if v in ("off", "0", "false", "no", "disable", "disabled"):
+            args["on"] = False
     if cmd in ("volume",) and "stream" not in args and positional:
         args["stream"] = positional[0]
         if len(positional) > 1:
@@ -76,34 +81,38 @@ REQPY
 )"
 
 RESP="$(PHONE_REQ="$REQ" python3 - "$SOCK" << 'PY'
-import os, socket, sys
+import json, os, socket, sys
 path = sys.argv[1]
 data = os.environ["PHONE_REQ"].encode()
 abstract = b"\0ru.dredd20.opencode.phone"
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(120)
-connected = False
-if os.path.exists(path):
-    try:
-        s.connect(path)
-        connected = True
-    except OSError:
-        s.close()
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(120)
-if not connected:
-    s.connect(abstract)
-s.sendall(data if data.endswith(b"\n") else data + b"\n")
-buf = b""
-while True:
-    chunk = s.recv(65536)
-    if not chunk:
-        break
-    buf += chunk
-    if b"\n" in buf:
-        break
-s.close()
-sys.stdout.write(buf.decode("utf-8", "replace"))
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(120)
+    connected = False
+    if os.path.exists(path):
+        try:
+            s.connect(path)
+            connected = True
+        except OSError:
+            s.close()
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(120)
+    if not connected:
+        s.connect(abstract)
+    s.sendall(data if data.endswith(b"\n") else data + b"\n")
+    buf = b""
+    while True:
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+        if b"\n" in buf:
+            break
+    s.close()
+    sys.stdout.write(buf.decode("utf-8", "replace"))
+except Exception as e:
+    # Always emit protocol JSON so the wrapper never prints a traceback.
+    sys.stdout.write(json.dumps({"ok": False, "error": "phone api unreachable: %s" % e}) + "\n")
 PY
 )"
 
@@ -111,12 +120,24 @@ python3 -c '
 import json, sys
 raw = sys.argv[1].strip()
 if not raw:
-    print("empty response from phone API", file=sys.stderr)
+    print(json.dumps({"error": "empty response from phone API"}))
     sys.exit(2)
-msg = json.loads(raw)
+try:
+    msg = json.loads(raw)
+except json.JSONDecodeError:
+    print(json.dumps({"error": "invalid response from phone API"}))
+    sys.exit(2)
 if not msg.get("ok"):
+    out = {}
+    perm = msg.get("needs_permission") or msg.get("needsPermission")
     err = msg.get("error") or "request failed"
-    print(err, file=sys.stderr)
+    if perm or err == "permission_pending":
+        out["error"] = "permission_pending"
+        if perm:
+            out["permission"] = perm
+    else:
+        out["error"] = err
+    print(json.dumps(out, ensure_ascii=False))
     sys.exit(1)
 data = msg.get("data")
 if data is None:
@@ -124,5 +145,6 @@ if data is None:
 if isinstance(data, (dict, list)):
     print(json.dumps(data, ensure_ascii=False, indent=2))
 else:
-    print(data)
+    # Never print a bare permission string; keep JSON for consistency.
+    print(json.dumps({"value": data}, ensure_ascii=False) if not isinstance(data, (int, float, bool)) else json.dumps(data))
 ' "$RESP"

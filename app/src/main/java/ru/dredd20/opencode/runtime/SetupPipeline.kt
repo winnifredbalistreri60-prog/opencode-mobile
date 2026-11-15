@@ -96,7 +96,6 @@ class SetupPipeline(
         File(root, "etc/apt/apt.conf.d/99opencode-proot").writeText("APT::Sandbox::User \"root\";\n")
         File(root, EmbeddedRuntime.ROOTFS_MARKER).writeText(img.name + "\n")
         EmbeddedRuntime.writeResolvConf(c)
-        tarball.delete()
         progress("running", 38, "rootfs", tr("Ubuntu распакована (${img.name})", "Ubuntu unpacked (${img.name})"))
     }
 
@@ -129,10 +128,15 @@ class SetupPipeline(
     private fun installOpenCode(c: Context, artifact: OpenCodeRelease.Artifact, cancelled: () -> Boolean, force: Boolean = false) {
         val destDir = File(EmbeddedRuntime.rootfsDir(c), "usr/local/bin")
         val dest = File(destDir, "opencode")
-        val marker = File(EmbeddedRuntime.rootfsDir(c), EmbeddedRuntime.SETUP_MARKER)
-        val already = dest.isFile && dest.canExecute() &&
-            marker.isFile && marker.readText().trim().startsWith(OpenCodeRelease.VERSION)
-        if (already && !force) {
+        val versionMarker = File(EmbeddedRuntime.rootfsDir(c), SetupSkip.CLI_VERSION_MARKER)
+        val installedVer = versionMarker.takeIf { it.isFile }?.readText()?.trim()
+        val already = SetupSkip.shouldSkipOpenCodeInstall(
+            binaryExists = dest.isFile && dest.canExecute(),
+            installedVersion = installedVer,
+            wantedVersion = OpenCodeRelease.VERSION,
+            force = force,
+        )
+        if (already) {
             progress("running", 76, "cli", tr("OpenCode ${OpenCodeRelease.VERSION} уже установлен, загрузка пропущена", "OpenCode ${OpenCodeRelease.VERSION} already installed, skipping download"))
             return
         }
@@ -157,28 +161,38 @@ class SetupPipeline(
         } finally {
             EmbeddedRuntime.deleteTree(extractTo)
         }
-        tarball.delete()
+        versionMarker.writeText(OpenCodeRelease.VERSION + "\n")
         progress("running", 76, "cli", tr("OpenCode ${OpenCodeRelease.VERSION} установлен", "OpenCode ${OpenCodeRelease.VERSION} installed"))
     }
 
     private fun installAptAndHelpers(c: Context, cancelled: () -> Boolean) {
-        progress("running", 78, "apt", tr("Установка git, ripgrep, python3 (apt)", "Installing git, ripgrep, python3 (apt)"))
-        val cmd = """
-            set -e
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -y
-            apt-get install -y --no-install-recommends ca-certificates git ripgrep python3 curl
-            command -v git >/dev/null
-            command -v rg >/dev/null
-            command -v python3 >/dev/null
-        """.trimIndent()
-        val result = kotlinx.coroutines.runBlocking {
-            EmbeddedRuntime.bash(c, cmd, 15 * 60 * 1000L)
-        }
-        if (cancelled()) throw java.util.concurrent.CancellationException("cancelled")
-        if (!result.ok) {
-            EmbeddedRuntime.appendLog(c, "install.log", result.combined().takeLast(4000))
-            fail(85, "apt", tr("apt не удался: ${result.error ?: ("code " + result.exitCode)}", "apt failed: ${result.error ?: ("code " + result.exitCode)}"))
+        val root = EmbeddedRuntime.rootfsDir(c)
+        val aptMarker = File(root, SetupSkip.APT_MARKER)
+        val gitOk = File(root, "usr/bin/git").isFile
+        val rgOk = File(root, "usr/bin/rg").isFile
+        val pyOk = File(root, "usr/bin/python3").isFile
+        if (SetupSkip.shouldSkipApt(aptMarker.isFile, gitOk, rgOk, pyOk, force = false)) {
+            progress("running", 88, "apt", tr("apt-пакеты уже установлены, шаг пропущен", "apt packages already installed, skipping"))
+        } else {
+            progress("running", 78, "apt", tr("Установка git, ripgrep, python3 (apt)", "Installing git, ripgrep, python3 (apt)"))
+            val cmd = """
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -y
+                apt-get install -y --no-install-recommends ca-certificates git ripgrep python3 curl
+                command -v git >/dev/null
+                command -v rg >/dev/null
+                command -v python3 >/dev/null
+            """.trimIndent()
+            val result = kotlinx.coroutines.runBlocking {
+                EmbeddedRuntime.bash(c, cmd, 15 * 60 * 1000L)
+            }
+            if (cancelled()) throw java.util.concurrent.CancellationException("cancelled")
+            if (!result.ok) {
+                EmbeddedRuntime.appendLog(c, "install.log", result.combined().takeLast(4000))
+                fail(85, "apt", tr("apt не удался: ${result.error ?: ("code " + result.exitCode)}", "apt failed: ${result.error ?: ("code " + result.exitCode)}"))
+            }
+            aptMarker.writeText("ok\n")
         }
         progress("running", 90, "phone", tr("Установка Phone API и MCP", "Installing Phone API and MCP"))
         GuestFiles.install(c)
@@ -187,6 +201,7 @@ class SetupPipeline(
 
     private fun writeConfig(c: Context) {
         GuestFiles.writeOpenCodeConfig(c)
+        File(EmbeddedRuntime.rootfsDir(c), SetupSkip.CONFIG_MARKER).writeText("ok\n")
     }
 
     private fun download(step: String, target: File, url: String, sha: String, pctFrom: Int, pctTo: Int, cancelled: () -> Boolean) {

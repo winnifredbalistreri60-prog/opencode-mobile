@@ -1,0 +1,71 @@
+name: Bug report
+description: Something is broken in OpenCode Mobile
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is an **unofficial** Android client (not a product of the OpenCode team).
+        Please search existing issues first. Do not paste passwords, `serve-state.json`,
+        `local.properties`, or keystore files.
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: versionName / versionCode from Settings or `adb shell dumpsys package ru.dredd20.opencode`
+      placeholder: "0.1.2 (versionCode 3)"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Embedded (PRoot)
+        - Termux
+        - Remote
+        - Unsure
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device / emulator
+      description: Model, Android version, ABI (arm64 / x86_64), and WebView version if relevant
+      placeholder: "Pixel 8, Android 15, arm64; or AVD murf-embed35 API 35"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Install…\n2. Start…\n3. …"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant snippets from App settings logs. Redact passwords and tokens.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I did not attach keystores, local.properties, or unredacted serve-state / last-serve files.
+          required: true
+        - label: I believe this is a client bug, not an upstream OpenCode CLI or model-quota (e.g. 429) issue.
+          required: false

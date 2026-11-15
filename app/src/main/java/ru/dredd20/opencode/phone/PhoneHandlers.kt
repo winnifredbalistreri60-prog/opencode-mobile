@@ -77,7 +77,7 @@ class PhoneHandlers(
                 else -> PhoneResponse.error(req.id, "not implemented")
             }
         } catch (e: SecurityException) {
-            PhoneResponse.error(req.id, e.message ?: "permission denied", needsPermission = e.message)
+            PhoneResponse.error(req.id, PhoneClientJson.PERMISSION_PENDING, needsPermission = e.message)
         } catch (e: Exception) {
             PhoneResponse.error(req.id, e.message ?: e.toString())
         }
@@ -251,7 +251,7 @@ class PhoneHandlers(
         val id = cm.cameraIdList.firstOrNull { cam ->
             cm.getCameraCharacteristics(cam).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
         } ?: return PhoneResponse.error(req.id, tr("нет вспышки", "no flashlight"))
-        val on = if (req.args.has("on")) req.argBool("on") else true
+        val on = TorchArgs.parseOn(req.args, fallback = true)
         cm.setTorchMode(id, on)
         return PhoneResponse.ok(req.id, mapOf("on" to on))
     }

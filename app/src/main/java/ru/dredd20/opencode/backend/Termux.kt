@@ -37,6 +37,17 @@ object Termux {
 
     fun ready(context: Context) = isInstalled(context) && hasPermission(context)
 
+    fun instructions(): String = tr(
+        "1. Установите Termux с F-Droid или GitHub (не из Play).\n" +
+            "2. В Termux: pkg install opencode или поставьте официальный бинарник.\n" +
+            "3. Добавьте в ~/.termux/termux.properties строку allow-external-apps=true и выполните termux-reload-settings.\n" +
+            "4. Разрешите этому приложению «запускать команды в Termux».",
+        "1. Install Termux from F-Droid or GitHub (not Play).\n" +
+            "2. In Termux: pkg install opencode, or install the official binary.\n" +
+            "3. Add allow-external-apps=true to ~/.termux/termux.properties and run termux-reload-settings.\n" +
+            "4. Grant this app the “Run commands in Termux” permission.",
+    )
+
     fun notReadyReason(context: Context): String? = when {
         !isInstalled(context) -> tr("Установите Termux (F-Droid/GitHub)", "Install Termux (F-Droid/GitHub)")
         !hasPermission(context) -> tr("Нужно разрешение «запускать команды в Termux» и allow-external-apps=true", "Grant “Run commands in Termux” and set allow-external-apps=true")

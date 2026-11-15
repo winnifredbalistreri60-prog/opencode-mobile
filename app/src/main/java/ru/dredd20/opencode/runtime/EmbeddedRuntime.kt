@@ -33,6 +33,8 @@ object EmbeddedRuntime {
     fun cacheDir(c: Context) = File(baseDir(c), "dl")
     fun runDir(c: Context) = File(baseDir(c), "run")
     fun stateFile(c: Context) = File(hostDir(c), "serve-state.json")
+    /** Survives Stop so the next Start can reuse the same port and password. */
+    fun lastServeFile(c: Context) = File(hostDir(c), "last-serve.json")
 
     fun layout(c: Context): ProotLayout {
         val base = baseDir(c)

@@ -104,25 +104,33 @@ class RuntimeService : Service() {
             stopSelfIfIdle()
             return
         }
+        GuestFiles.installPhoneCli(this)
         acquireWake()
         set(Phase.STARTING, tr("Запуск OpenCode…", "Starting OpenCode…"))
         scope.launch {
             try {
                 PhoneApiService.ensure(this@RuntimeService)
                 val existing = ServeState.read(EmbeddedRuntime.stateFile(this@RuntimeService))
+                val last = ServeState.read(EmbeddedRuntime.lastServeFile(this@RuntimeService))
                 val pidAlive = existing?.let { ProcTree.isAlive(it.pid) } == true
                 val healthOk = existing != null && ServeHealth.check(existing.origin, existing.password).ok
                 if (ServeReuse.shouldReuse(existing, pidAlive, healthOk, null)) {
                     set(Phase.RUNNING, tr("Сервер уже запущен на порту ${existing!!.port}", "Server already running on port ${existing!!.port}"))
                     agentWatcher.start(scope, existing.origin, existing.password)
+                    ServeState.write(EmbeddedRuntime.lastServeFile(this@RuntimeService), existing)
                     // Keep the FGS up even though we didn't spawn; no process to wait on.
                     return@launch
                 }
                 var lastError: String? = null
                 repeat(3) { attempt ->
-                    val preferred = if (attempt == 0) existing?.port else null
+                    val preferred = if (attempt == 0) existing?.port ?: last?.port else null
                     val port = PortAllocator.pickFreePort("127.0.0.1", preferred)
-                    val password = ServeCredentials.randomPassword()
+                    val reusedPassword = when {
+                        existing != null && existing.port == port && existing.password.isNotBlank() -> existing.password
+                        last != null && last.port == port && last.password.isNotBlank() -> last.password
+                        else -> null
+                    }
+                    val password = reusedPassword ?: ServeCredentials.randomPassword()
                     val log = File(EmbeddedRuntime.logsDir(this@RuntimeService), "svc.log")
                     if (log.length() > 5_000_000) log.renameTo(File(log.path + ".1"))
                     writeServePasswordFile(password)
@@ -138,6 +146,7 @@ class RuntimeService : Service() {
                     if (ok) {
                         val st = ServeState(port = port, pid = pid, password = password, startedAt = System.currentTimeMillis())
                         ServeState.write(EmbeddedRuntime.stateFile(this@RuntimeService), st)
+                        ServeState.write(EmbeddedRuntime.lastServeFile(this@RuntimeService), st)
                         set(Phase.RUNNING, tr("Сервер слушает 127.0.0.1:$port", "Server listening on 127.0.0.1:$port"))
                         agentWatcher.start(scope, st.origin, password)
                         val rc = p.waitFor()

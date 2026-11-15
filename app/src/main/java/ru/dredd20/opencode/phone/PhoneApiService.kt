@@ -20,13 +20,21 @@ import ru.dredd20.opencode.runtime.EmbeddedRuntime
 import ru.dredd20.opencode.serve.ServeCredentials
 import ru.dredd20.opencode.usb.UsbController
 import java.io.File
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 class PhoneApiService : Service() {
     private val running = AtomicBoolean(false)
+    private val lock = Any()
     private var server: UnixSocketServer? = null
-    private val pool = Executors.newCachedThreadPool()
+    private var pool: ExecutorService? = null
+    private var acceptThread: Thread? = null
     private lateinit var handlers: PhoneHandlers
     private lateinit var token: String
 
@@ -38,64 +46,123 @@ class PhoneApiService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val n = intent?.getLongExtra(EXTRA_EPOCH, 0L) ?: 0L
+        val stale = n != 0L && n < epoch.get()
         if (intent?.action == ACTION_STOP) {
             // Must not be started via startForegroundService; stop() uses startService.
-            stopSelf(); return START_NOT_STICKY
+            // A Stop/Start race can deliver this after a newer ensure(); ignore it.
+            if (stale) return START_NOT_STICKY
+            tearDown()
+            stopSelf()
+            return START_NOT_STICKY
         }
         // startForeground must be called before any early return or stopSelf
         // (Android throws RemoteServiceException otherwise).
         goForeground()
-        if (running.compareAndSet(false, true)) startLoop()
+        if (stale) return START_STICKY
+        synchronized(lock) {
+            if (!running.get()) startLoop()
+        }
         goForeground() // refresh text after the socket is bound
         return START_STICKY
     }
 
     private fun startLoop() {
+        tearDownLocked()
         val run = EmbeddedRuntime.runDir(this).apply { mkdirs() }
         val sock = File(run, "phone.sock")
         val tokenFile = File(run, "phone.token")
         token = tokenFile.let { f ->
             if (f.isFile && f.length() >= 16) f.readText().trim()
-            else ServeCredentials.randomPassword().also { f.writeText(it); f.setReadable(false, false); f.setReadable(true, true); f.setWritable(true, true) }
+            else ServeCredentials.randomPassword().also {
+                f.writeText(it)
+                f.setReadable(false, false)
+                f.setReadable(true, true)
+                f.setWritable(true, true)
+            }
         }
+        val workers = newPool()
+        pool = workers
+        running.set(true)
         try {
             server = UnixSocketServer(sock).also { it.start() }
         } catch (e: Exception) {
-            EmbeddedRuntime.appendLog(this, "phone.log", "socket bind failed: ${e.message}")
-            running.set(false)
-            stopSelf()
-            return
+            // One more attempt after a forced close/unlink/wakeup.
+            EmbeddedRuntime.appendLog(this, "phone.log", "socket bind failed: ${e.message}; retrying")
+            runCatching { server?.close() }
+            try {
+                Thread.sleep(80)
+                server = UnixSocketServer(sock).also { it.start() }
+            } catch (e2: Exception) {
+                EmbeddedRuntime.appendLog(this, "phone.log", "socket bind failed: ${e2.message}")
+                running.set(false)
+                workers.shutdownNow()
+                if (pool === workers) pool = null
+                stopSelf()
+                return
+            }
         }
-        pool.execute {
-            while (running.get()) {
-                val client = try { server?.accept() } catch (_: Exception) { break } ?: break
-                pool.execute {
+        val listen = server
+        val thread = Thread({
+            try {
+                while (running.get()) {
+                    val client = try {
+                        listen?.accept()
+                    } catch (_: Exception) {
+                        break
+                    } ?: break
                     try {
-                        val line = client.input.bufferedReader().readLine() ?: return@execute
-                        val req = PhoneProtocol.parse(line)
-                        val resp = dispatch(req)
-                        client.output.write((resp.toJson().toString() + "\n").toByteArray())
-                        client.output.flush()
-                    } catch (e: Exception) {
-                        EmbeddedRuntime.appendLog(this, "phone.log", "request failed: ${e.message}")
-                    } finally {
+                        workers.execute { handleClient(client) }
+                    } catch (_: RejectedExecutionException) {
                         runCatching { client.close() }
+                        if (!running.get()) break
+                        // A closed pool must never crash the process.
+                        EmbeddedRuntime.appendLog(this, "phone.log", "executor rejected a client; dropping")
+                    } catch (t: Throwable) {
+                        runCatching { client.close() }
+                        EmbeddedRuntime.appendLog(this, "phone.log", "accept dispatch failed: ${t.message}")
                     }
                 }
+            } catch (t: Throwable) {
+                EmbeddedRuntime.appendLog(this, "phone.log", "accept loop failed: ${t.message}")
             }
+        }, "phone-accept").also {
+            it.isDaemon = true
+            it.uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
+                EmbeddedRuntime.appendLog(this, "phone.log", "accept thread crash suppressed: ${t.message}")
+            }
+            it.start()
+        }
+        acceptThread = thread
+    }
+
+    private fun handleClient(client: ClientConn) {
+        try {
+            val line = client.input.bufferedReader().readLine() ?: return
+            val req = PhoneProtocol.parse(line)
+            val resp = dispatch(req)
+            client.output.write((resp.toJson().toString() + "\n").toByteArray())
+            client.output.flush()
+        } catch (e: Exception) {
+            EmbeddedRuntime.appendLog(this, "phone.log", "request failed: ${e.message}")
+        } finally {
+            runCatching { client.close() }
         }
     }
 
     private fun dispatch(req: PhoneRequest?): PhoneResponse {
-        if (req == null) return PhoneResponse.error("0", "bad request")
-        if (!PhoneProtocol.tokenOk(req.token, token)) return PhoneResponse.error(req.id, "unauthorized")
-        val cat = PhoneProtocol.categoryFor(req.cmd)
-        if (cat != null) {
-            if (!AppPrefs.categoryEnabled(this, cat)) {
+        return try {
+            if (req == null) return PhoneResponse.error("0", "bad request")
+            if (!PhoneProtocol.tokenOk(req.token, token)) return PhoneResponse.error(req.id, "unauthorized")
+            val cat = PhoneProtocol.categoryFor(req.cmd)
+            if (cat != null && !AppPrefs.categoryEnabled(this, cat)) {
                 return PhoneResponse.error(req.id, tr("категория $cat выключена в настройках", "category $cat is disabled in settings"))
             }
+            handlers.handle(req)
+        } catch (t: Throwable) {
+            EmbeddedRuntime.appendLog(this, "phone.log", "dispatch failed: ${t.message}")
+            PhoneResponse.error(req?.id ?: "0", t.message ?: "internal error")
         }
-        return handlers.handle(req)
     }
 
     private fun goForeground() {
@@ -116,10 +183,39 @@ class PhoneApiService : Service() {
     }
 
     override fun onDestroy() {
+        tearDown()
+        super.onDestroy()
+    }
+
+    private fun tearDown() {
+        synchronized(lock) { tearDownLocked() }
+    }
+
+    private fun tearDownLocked() {
         running.set(false)
         runCatching { server?.close() }
-        pool.shutdownNow()
-        super.onDestroy()
+        server = null
+        val th = acceptThread
+        acceptThread = null
+        th?.interrupt()
+        runCatching { th?.join(1_000) }
+        val p = pool
+        pool = null
+        p?.shutdownNow()
+        runCatching { p?.awaitTermination(1, TimeUnit.SECONDS) }
+    }
+
+    private fun newPool(): ExecutorService {
+        val n = AtomicInteger(0)
+        val factory = ThreadFactory { r ->
+            Thread(r, "phone-pool-" + n.incrementAndGet()).apply {
+                isDaemon = true
+                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
+                    EmbeddedRuntime.appendLog(this@PhoneApiService, "phone.log", "worker crash suppressed: ${t.message}")
+                }
+            }
+        }
+        return Executors.newCachedThreadPool(factory)
     }
 
     private fun socketDescription(): String {
@@ -134,16 +230,22 @@ class PhoneApiService : Service() {
     companion object {
 
         const val ACTION_STOP = "ru.dredd20.opencode.PHONE_STOP"
+        const val EXTRA_EPOCH = "ru.dredd20.opencode.PHONE_EPOCH"
         const val CHANNEL = "opencode_phone"
         const val NOTIFY_CHANNEL = "opencode_phone_events"
         const val NOTIFICATION_ID = 8102
 
+        private val epoch = AtomicLong(0)
+
         fun ensure(c: Context) {
-            ContextCompat.startForegroundService(c, Intent(c, PhoneApiService::class.java))
+            val n = epoch.incrementAndGet()
+            val i = Intent(c, PhoneApiService::class.java).putExtra(EXTRA_EPOCH, n)
+            ContextCompat.startForegroundService(c, i)
         }
 
         fun stop(c: Context) {
-            c.startService(Intent(c, PhoneApiService::class.java).setAction(ACTION_STOP))
+            val n = epoch.incrementAndGet()
+            c.startService(Intent(c, PhoneApiService::class.java).setAction(ACTION_STOP).putExtra(EXTRA_EPOCH, n))
         }
 
         fun ensureChannel(c: Context) {

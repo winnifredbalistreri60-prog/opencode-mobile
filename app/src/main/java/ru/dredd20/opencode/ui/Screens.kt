@@ -119,6 +119,7 @@ fun SettingsScreen(
     onStop: () -> Unit,
     onUpdate: () -> Unit,
     onAbout: () -> Unit,
+    termuxHint: String? = null,
     modifier: Modifier = Modifier,
 ) {
     var showLogs by remember { mutableStateOf(twoPane) }
@@ -129,6 +130,9 @@ fun SettingsScreen(
             ModeRow(tr("Встроенный (по умолчанию)", "Embedded (default)"), mode == RuntimeMode.EMBEDDED) { onMode(RuntimeMode.EMBEDDED) }
             ModeRow(tr("Termux", "Termux"), mode == RuntimeMode.TERMUX) { onMode(RuntimeMode.TERMUX) }
             ModeRow(tr("Удалённый сервер", "Remote server"), mode == RuntimeMode.REMOTE) { onMode(RuntimeMode.REMOTE) }
+            if (mode == RuntimeMode.TERMUX && !termuxHint.isNullOrBlank()) {
+                Text(termuxHint, style = MaterialTheme.typography.bodySmall)
+            }
             if (mode == RuntimeMode.REMOTE) {
                 OutlinedTextField(remoteUrl, onRemoteUrl, label = { Text("URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 if (CleartextPolicy.shouldWarnCleartext(remoteUrl)) {
@@ -162,8 +166,8 @@ fun SettingsScreen(
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!running) Button(onClick = onStart) { Text(tr("Запустить", "Start")) }
-                else OutlinedButton(onClick = onStop) { Text(tr("Стоп", "Stop")) }
+                Button(onClick = onStart, enabled = !running || mode == RuntimeMode.REMOTE) { Text(tr("Запустить", "Start")) }
+                OutlinedButton(onClick = onStop, enabled = running || mode == RuntimeMode.REMOTE) { Text(tr("Стоп", "Stop")) }
                 OutlinedButton(onClick = onUpdate) { Text(tr("Обновить OpenCode", "Update OpenCode")) }
             }
             Text(tr("Доступы телефона", "Phone access"), style = MaterialTheme.typography.titleMedium)

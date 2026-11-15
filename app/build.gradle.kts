@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -11,8 +14,8 @@ android {
         applicationId = "ru.dredd20.opencode"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         // Only arm64 and x86_64 have an official OpenCode binary. The APK still
@@ -23,10 +26,10 @@ android {
     }
 
     signingConfigs {
-        // Same debug key as 0.1.0 so 0.1.1 installs over it (SHA-256 65b96eb0…2a90).
-        // Never hook a MURF/release key.
+        // Same debug cert as 0.1.0/0.1.1 (SHA-256 65b96eb0…2a90). The keystore is
+        // NOT in git: set debug.keystore in local.properties or OPENCODE_DEBUG_KEYSTORE.
         getByName("debug") {
-            storeFile = rootProject.file("keystore/debug-v0.1.keystore")
+            storeFile = debugKeystoreFile()
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
@@ -83,4 +86,23 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.org.json)
+}
+
+// Resolve the 0.1.0 debug keystore without keeping it in the repository.
+fun debugKeystoreFile(): File {
+    val props = Properties()
+    val lp = rootProject.file("local.properties")
+    if (lp.isFile) lp.inputStream().use { props.load(it) }
+    val raw = sequenceOf(
+        props.getProperty("debug.keystore"),
+        System.getenv("OPENCODE_DEBUG_KEYSTORE"),
+        "/workspace/opencode-android-keys/debug-v0.1.keystore",
+    ).mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }.first()
+    val f = File(raw)
+    if (!f.isFile) {
+        throw GradleException(
+            "Debug keystore not found at $f. Copy debug-v0.1.keystore and set debug.keystore in local.properties or OPENCODE_DEBUG_KEYSTORE.",
+        )
+    }
+    return f
 }

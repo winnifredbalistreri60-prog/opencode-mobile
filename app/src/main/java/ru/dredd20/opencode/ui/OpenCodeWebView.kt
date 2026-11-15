@@ -54,6 +54,7 @@ class OpenCodeWebView @JvmOverloads constructor(
     var onFileChooser: ((ValueCallback<Array<Uri>>?, WebChromeClient.FileChooserParams?) -> Boolean)? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var lastError: Boolean = false
+    private var pendingClearHistory: Boolean = false
     private var polyfillInstalledFor: String? = null
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -98,6 +99,10 @@ class OpenCodeWebView @JvmOverloads constructor(
             override fun onPageFinished(view: WebView, url: String?) {
                 if (!lastError) lastErrorDescription = null
                 lastError = false
+                if (pendingClearHistory) {
+                    view.clearHistory()
+                    pendingClearHistory = false
+                }
             }
         }
         webView.webChromeClient = object : WebChromeClient() {
@@ -201,6 +206,11 @@ class OpenCodeWebView @JvmOverloads constructor(
         if (alreadyOnOrigin) return
         if (newOrigin.isBlank()) return
         lastError = false
+        if (originChanged) {
+            // Drop history that points at a previous port/origin (BUG-18).
+            pendingClearHistory = true
+            runCatching { webView.clearHistory() }
+        }
         if (password.isBlank()) {
             webView.loadUrl("$newOrigin/")
             return
@@ -246,16 +256,30 @@ class OpenCodeWebView @JvmOverloads constructor(
         cb?.onReceiveValue(uris)
     }
 
-    fun goBackOrFalse(): Boolean = if (webView.canGoBack()) { webView.goBack(); true } else false
+    fun goBackOrFalse(): Boolean {
+        if (!webView.canGoBack()) return false
+        val list = webView.copyBackForwardList()
+        val cur = origin.ifBlank { list.currentItem?.url }
+        val idx = list.currentIndex
+        if (idx <= 0) return false
+        val prev = list.getItemAtIndex(idx - 1)?.url
+        if (!WebHistoryPolicy.shouldGoBack(cur, prev)) {
+            // Leave the dead previous origin out of the stack.
+            runCatching { webView.clearHistory() }
+            return false
+        }
+        webView.goBack()
+        return true
+    }
 
     fun isOurUri(uri: Uri): Boolean {
-        val host = uri.host ?: return false
-        return isOurHost(host) && (uri.scheme == "http" || uri.scheme == "https")
+        if (uri.scheme != "http" && uri.scheme != "https") return false
+        return WebHistoryPolicy.sameOrigin(origin, uri.toString())
     }
 
     private fun isOurHost(host: String): Boolean {
         val ours = Uri.parse(origin).host ?: "127.0.0.1"
-        return host == ours || host == "127.0.0.1" || host == "localhost" || host == "[::1]"
+        return host.equals(ours, ignoreCase = true)
     }
 
     private fun openExternal(uri: Uri) {

@@ -12,3 +12,7 @@ captures/
 .cxx/
 __pycache__/
 *.pyc
+# Debug signing key lives outside the repo (see local.properties / OPENCODE_DEBUG_KEYSTORE).
+keystore/
+*.keystore
+*.jks

@@ -16,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,11 +27,14 @@ import ru.dredd20.opencode.serve.ServeHealth
 import ru.dredd20.opencode.ui.WebViewSupport
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -71,6 +75,7 @@ import ru.dredd20.opencode.prefs.AppPrefs
 import ru.dredd20.opencode.prefs.RuntimeMode
 import ru.dredd20.opencode.runtime.EmbeddedRuntime
 import ru.dredd20.opencode.runtime.RuntimeService
+import ru.dredd20.opencode.serve.RemoteOrigin
 import ru.dredd20.opencode.serve.ServeCredentials
 import ru.dredd20.opencode.serve.ServeState
 import ru.dredd20.opencode.ui.AboutScreen
@@ -87,6 +92,7 @@ class MainActivity : ComponentActivity() {
 
     /** Retained across configuration changes (Activity is not recreated). */
     private var webHost: OpenCodeWebView? = null
+    @Volatile private var currentDest: Dest = Dest.Session
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     private val fileChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -123,7 +129,14 @@ class MainActivity : ComponentActivity() {
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webHost?.goBackOrFalse() == true) return
+                // Settings/About: never steal Back for the hidden WebView (BUG-19).
+                if (currentDest == Dest.Settings || currentDest == Dest.About) {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                    return
+                }
+                if (currentDest == Dest.Session && webHost?.goBackOrFalse() == true) return
                 isEnabled = false
                 onBackPressedDispatcher.onBackPressed()
                 isEnabled = true
@@ -192,10 +205,13 @@ class MainActivity : ComponentActivity() {
                 ViewportPolicy.widthClass(widthDp) == ViewportPolicy.WidthClass.Expanded
             val runtimeState by RuntimeService.state.collectAsState()
             var dest by remember { mutableStateOf(initialDest()) }
+            currentDest = dest
+            androidx.compose.runtime.SideEffect { currentDest = dest }
             var tick by remember { mutableIntStateOf(0) }
             var confirmPrompt by remember { mutableStateOf<Pair<String, String>?>(null) }
             var userMessage by remember { mutableStateOf<String?>(null) }
             var askStopForUpdate by remember { mutableStateOf(false) }
+            var pendingMode by remember { mutableStateOf<RuntimeMode?>(null) }
             var liveServe by remember { mutableStateOf<ServeState?>(null) }
             LaunchedEffect(Unit) {
                 while (true) {
@@ -276,51 +292,72 @@ class MainActivity : ComponentActivity() {
                 },
             ) { padding ->
                 val mod = Modifier.fillMaxSize().padding(padding)
-                when (dest) {
-                    Dest.Unsupported -> UnsupportedAbiScreen(onRemote = { AppPrefs.setMode(this, RuntimeMode.REMOTE); dest = Dest.Settings }, modifier = mod)
-                    Dest.Setup -> {
-                        val p = EmbeddedRuntime.readProgress(this)
-                        SetupScreen(
-                            progressPct = p?.optInt("pct") ?: 0,
-                            message = p?.optString("msg").orEmpty().ifBlank { runtimeState.message },
-                            error = if (runtimeState.phase == RuntimeService.Phase.ERROR) runtimeState.message else p?.takeIf { it.optString("state") == "error" }?.optString("msg"),
-                            installing = RuntimeService.installing || runtimeState.phase == RuntimeService.Phase.INSTALLING,
-                            onInstall = { RuntimeService.send(this, RuntimeService.ACTION_INSTALL) },
-                            onRetry = { RuntimeService.send(this, RuntimeService.ACTION_INSTALL) },
-                            onRemote = { AppPrefs.setMode(this, RuntimeMode.REMOTE); dest = Dest.Settings },
-                            modifier = mod,
-                        )
-                    }
-                    Dest.Session -> SessionPane(serve, widthDp, modifier = mod)
-                    Dest.Settings -> SettingsPane(mode, runtimeState, expanded, serve, userMessage, onStart = {
-                        userMessage = null
-                        when (AppPrefs.mode(this)) {
-                            RuntimeMode.EMBEDDED -> RuntimeService.send(this, RuntimeService.ACTION_START)
-                            RuntimeMode.TERMUX -> lifecycleScope.launch {
-                                TermuxServe.ensureRunning(this@MainActivity).fold(
-                                    onSuccess = { userMessage = null },
-                                    onFailure = { userMessage = it.message ?: it.toString() },
-                                )
+                Box(mod) {
+                    when (dest) {
+                        Dest.Unsupported -> UnsupportedAbiScreen(onRemote = { switchMode(RuntimeMode.REMOTE); dest = Dest.Settings }, modifier = Modifier.fillMaxSize())
+                        Dest.Setup -> {
+                            val p = EmbeddedRuntime.readProgress(this@MainActivity)
+                            SetupScreen(
+                                progressPct = p?.optInt("pct") ?: 0,
+                                message = p?.optString("msg").orEmpty().ifBlank { runtimeState.message },
+                                error = if (runtimeState.phase == RuntimeService.Phase.ERROR) runtimeState.message else p?.takeIf { it.optString("state") == "error" }?.optString("msg"),
+                                installing = RuntimeService.installing || runtimeState.phase == RuntimeService.Phase.INSTALLING,
+                                onInstall = { RuntimeService.send(this@MainActivity, RuntimeService.ACTION_INSTALL) },
+                                onRetry = { RuntimeService.send(this@MainActivity, RuntimeService.ACTION_INSTALL) },
+                                onRemote = { switchMode(RuntimeMode.REMOTE); dest = Dest.Settings },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Dest.Session, Dest.Settings, Dest.About -> {
+                            // Keep the WebView composed when visiting Settings/About so it is not recreated (BUG-20).
+                            SessionPane(
+                                serve, widthDp,
+                                modifier = if (dest == Dest.Session) Modifier.fillMaxSize() else Modifier.size(0.dp),
+                            )
+                            if (dest == Dest.Settings) {
+                                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                                    SettingsPane(mode, runtimeState, expanded, serve, userMessage, onStart = {
+                                        userMessage = null
+                                        when (AppPrefs.mode(this@MainActivity)) {
+                                            RuntimeMode.EMBEDDED -> RuntimeService.send(this@MainActivity, RuntimeService.ACTION_START)
+                                            RuntimeMode.TERMUX -> lifecycleScope.launch {
+                                                TermuxServe.ensureRunning(this@MainActivity).fold(
+                                                    onSuccess = { userMessage = null; dest = Dest.Session },
+                                                    onFailure = { userMessage = it.message ?: it.toString() },
+                                                )
+                                            }
+                                            RuntimeMode.REMOTE -> {
+                                                if (RemoteOrigin.parse(AppPrefs.remoteUrl(this@MainActivity)) == null) {
+                                                    userMessage = tr("Укажите URL удалённого сервера", "Enter the remote server URL")
+                                                } else {
+                                                    dest = Dest.Session
+                                                }
+                                            }
+                                        }
+                                    }, onStop = {
+                                        when (AppPrefs.mode(this@MainActivity)) {
+                                            RuntimeMode.EMBEDDED -> RuntimeService.send(this@MainActivity, RuntimeService.ACTION_STOP)
+                                            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity) }
+                                            RuntimeMode.REMOTE -> userMessage = tr("Удалённый сервер не управляется из приложения", "The remote server is not stopped from the app")
+                                        }
+                                    }, onUpdate = {
+                                        if (RuntimeService.running) askStopForUpdate = true
+                                        else RuntimeService.send(this@MainActivity, RuntimeService.ACTION_UPDATE)
+                                    }, onAbout = { dest = Dest.About }, onRequestMode = { next ->
+                                        if (next != mode) {
+                                            if (modeHasRunningServer(mode, serve)) pendingMode = next
+                                            else switchMode(next)
+                                        }
+                                    }, modifier = Modifier.fillMaxSize())
+                                }
                             }
-                            RuntimeMode.REMOTE -> {
-                                if (AppPrefs.remoteUrl(this).isBlank()) {
-                                    userMessage = tr("Укажите URL удалённого сервера", "Enter the remote server URL")
-                                } else {
-                                    dest = Dest.Session
+                            if (dest == Dest.About) {
+                                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                                    AboutScreen(aboutText(), modifier = Modifier.fillMaxSize())
                                 }
                             }
                         }
-                    }, onStop = {
-                        when (AppPrefs.mode(this)) {
-                            RuntimeMode.EMBEDDED -> RuntimeService.send(this, RuntimeService.ACTION_STOP)
-                            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity) }
-                            RuntimeMode.REMOTE -> dest = Dest.Session
-                        }
-                    }, onUpdate = {
-                        if (RuntimeService.running) askStopForUpdate = true
-                        else RuntimeService.send(this, RuntimeService.ACTION_UPDATE)
-                    }, onAbout = { dest = Dest.About }, modifier = mod)
-                    Dest.About -> AboutScreen(aboutText(), modifier = mod)
+                    }
                 }
                 confirmPrompt?.let { (id, prompt) ->
                     AlertDialog(
@@ -346,6 +383,21 @@ class MainActivity : ComponentActivity() {
                         dismissButton = { TextButton(onClick = { askStopForUpdate = false }) { Text(tr("Отмена", "Cancel")) } },
                     )
                 }
+                pendingMode?.let { next ->
+                    AlertDialog(
+                        onDismissRequest = { pendingMode = null },
+                        title = { Text(tr("Сменить режим", "Switch mode")) },
+                        text = { Text(tr("Остановить текущий сервер и переключиться?", "Stop the current server and switch mode?")) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val target = next
+                                pendingMode = null
+                                switchMode(target)
+                            }) { Text(tr("Остановить и сменить", "Stop and switch")) }
+                        },
+                        dismissButton = { TextButton(onClick = { pendingMode = null }) { Text(tr("Отмена", "Cancel")) } },
+                    )
+                }
             }
         }
     }
@@ -368,13 +420,29 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
-        if (serve == null && mode != RuntimeMode.REMOTE) {
+        if (mode == RuntimeMode.TERMUX && serve == null) {
             Column(modifier.padding(24.dp)) {
-                Text(tr("Ожидание сервера…", "Waiting for the server…"))
+                Text(
+                    Termux.notReadyReason(this@MainActivity)
+                        ?: tr("Сервер Termux не запущен.", "The Termux server is not running."),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(Termux.instructions(), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp))
+                androidx.compose.material3.Button(
+                    onClick = {
+                        lifecycleScope.launch {
+                            TermuxServe.ensureRunning(this@MainActivity).fold(
+                                onSuccess = {},
+                                onFailure = { /* message is surfaced in settings; here we just stop waiting */ },
+                            )
+                        }
+                    },
+                    modifier = Modifier.padding(top = 12.dp),
+                ) { Text(tr("Запустить", "Start")) }
             }
             return
         }
-        if (mode == RuntimeMode.REMOTE && AppPrefs.remoteUrl(this).isBlank()) {
+        if (mode == RuntimeMode.REMOTE && RemoteOrigin.parse(AppPrefs.remoteUrl(this)) == null) {
             Column(modifier.padding(24.dp)) {
                 Text(tr("Укажите URL удалённого сервера в настройках приложения.", "Enter the remote server URL in app settings."))
             }
@@ -398,7 +466,7 @@ class MainActivity : ComponentActivity() {
                 factory = {
                     host.detachFromParent()
                     host.applyViewport(widthDp)
-                    if (origin.isNotBlank()) host.bind(origin, user, pass, forceReload = true)
+                    if (origin.isNotBlank()) host.bind(origin, user, pass)
                     host
                 },
                 update = {
@@ -420,6 +488,7 @@ class MainActivity : ComponentActivity() {
         onStop: () -> Unit,
         onUpdate: () -> Unit,
         onAbout: () -> Unit,
+        onRequestMode: (RuntimeMode) -> Unit,
         modifier: Modifier,
     ) {
         var url by remember { mutableStateOf(AppPrefs.remoteUrl(this)) }
@@ -436,19 +505,35 @@ class MainActivity : ComponentActivity() {
         }
         SettingsScreen(
             mode = mode,
-            onMode = { AppPrefs.setMode(this, it) },
+            onMode = onRequestMode,
             remoteUrl = url,
             onRemoteUrl = { url = it; AppPrefs.setRemoteUrl(this, it) },
             remoteUser = user,
             onRemoteUser = { user = it; AppPrefs.setRemoteUser(this, it) },
             remotePassword = pass,
             onRemotePassword = { pass = it; AppPrefs.setRemotePassword(this, it) },
-            running = RuntimeService.running || (serve != null && mode != RuntimeMode.EMBEDDED),
-            phase = runtimeState.phase.name,
+            running = when (mode) {
+                RuntimeMode.EMBEDDED -> RuntimeService.running || runtimeState.phase == RuntimeService.Phase.RUNNING
+                RuntimeMode.TERMUX -> serve != null
+                RuntimeMode.REMOTE -> false
+            },
+            phase = when (mode) {
+                RuntimeMode.EMBEDDED -> runtimeState.phase.name
+                RuntimeMode.TERMUX -> if (serve != null) "RUNNING" else "IDLE"
+                RuntimeMode.REMOTE -> if (serve != null) "READY" else "IDLE"
+            },
             message = listOfNotNull(
                 userMessage,
-                runtimeState.message.takeIf { it.isNotBlank() },
-                serve?.let { tr("порт ${it.port}", "port ${it.port}") },
+                when (mode) {
+                    RuntimeMode.EMBEDDED -> listOfNotNull(
+                        runtimeState.message.takeIf { it.isNotBlank() },
+                        serve?.let { tr("порт ${it.port}", "port ${it.port}") },
+                    ).distinct().joinToString(" · ").ifBlank { null }
+                    RuntimeMode.TERMUX -> serve?.let { tr("Termux 127.0.0.1:${it.port}", "Termux 127.0.0.1:${it.port}") }
+                        ?: Termux.notReadyReason(this)
+                    RuntimeMode.REMOTE -> serve?.let { tr("Удалённый ${it.origin}", "Remote ${it.origin}") }
+                        ?: tr("Укажите URL удалённого сервера", "Enter the remote server URL")
+                },
             ).distinct().joinToString(" · "),
             categories = catState,
             onCategory = { k, v -> AppPrefs.setCategoryEnabled(this, k, v); catState = catState + (k to v) },
@@ -458,6 +543,7 @@ class MainActivity : ComponentActivity() {
             onStop = onStop,
             onUpdate = onUpdate,
             onAbout = onAbout,
+            termuxHint = if (mode == RuntimeMode.TERMUX) Termux.instructions() else null,
             modifier = modifier,
         )
     }
@@ -477,10 +563,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun remoteState(): ServeState? {
-        val url = AppPrefs.remoteUrl(this)
-        if (url.isBlank()) return null
-        val u = Uri.parse(url)
-        return ServeState(u.port.takeIf { it > 0 } ?: if (u.scheme == "https") 443 else 80, -1, AppPrefs.remotePassword(this), 0L, u.host ?: "127.0.0.1")
+        val parsed = RemoteOrigin.parse(AppPrefs.remoteUrl(this)) ?: return null
+        return ServeState(parsed.port, -1, AppPrefs.remotePassword(this), 0L, parsed.host)
+    }
+
+    private fun modeHasRunningServer(mode: RuntimeMode, serve: ServeState?): Boolean = when (mode) {
+        RuntimeMode.EMBEDDED -> RuntimeService.running
+        RuntimeMode.TERMUX -> serve != null
+        RuntimeMode.REMOTE -> false
+    }
+
+    private fun switchMode(next: RuntimeMode) {
+        val prev = AppPrefs.mode(this)
+        if (prev == next) return
+        when (prev) {
+            RuntimeMode.EMBEDDED -> if (RuntimeService.running) RuntimeService.send(this, RuntimeService.ACTION_STOP)
+            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity) }
+            RuntimeMode.REMOTE -> Unit
+        }
+        AppPrefs.setMode(this, next)
     }
 
     private fun aboutText(): String {
@@ -506,8 +607,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && webHost?.goBackOrFalse() == true) return true
-        return super.onKeyDown(keyCode, event)
-    }
 }

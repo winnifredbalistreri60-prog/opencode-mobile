@@ -15,7 +15,14 @@ object GuestFiles {
     )
 
     fun install(c: Context) {
+        installPhoneCli(c)
+        writeOpenCodeConfig(c)
+    }
+
+    /** Refresh Phone API CLI scripts without rewriting the user's opencode.json. Called on each server start so upgrades pick up script fixes. */
+    fun installPhoneCli(c: Context) {
         val root = EmbeddedRuntime.rootfsDir(c)
+        if (!root.isDirectory) return
         val bin = File(root, "usr/local/bin").apply { mkdirs() }
         val client = c.assets.open("phone/phone-client.sh").bufferedReader().use { it.readText() }
         File(bin, "phone-client").writeText(client)
@@ -37,7 +44,6 @@ object GuestFiles {
             f.writeText(wrapper)
             f.setExecutable(true, false)
         }
-        writeOpenCodeConfig(c)
     }
 
     fun writeOpenCodeConfig(c: Context) {
