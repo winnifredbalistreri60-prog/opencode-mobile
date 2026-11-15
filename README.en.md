@@ -93,6 +93,10 @@ The script refuses test builds made with `-PocmUpdateTestServer=http://…` (loc
 | --- | --- | --- |
 | ![web UI](docs/screenshots/webui.png) | ![PONG reply](docs/screenshots/chat-reply.png) | ![notification](docs/screenshots/notification.png) |
 
+| Update found | Permission needed | After granting it |
+| --- | --- | --- |
+| ![update](docs/screenshots/update-available.png) | ![permission](docs/screenshots/update-permission.png) | ![install](docs/screenshots/update-install.png) |
+
 ## Docs
 
 - [CHANGELOG.md](CHANGELOG.md) — 0.1.0, 0.1.1, 0.1.2
