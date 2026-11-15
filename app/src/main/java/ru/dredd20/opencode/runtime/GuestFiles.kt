@@ -11,6 +11,9 @@ object GuestFiles {
         "termux-wifi-connectioninfo", "termux-share", "termux-open-url", "termux-telephony-call",
         "termux-usb",
         "termux-sms-send", "termux-sms-list", "termux-contact-list",
+        "termux-wifi-scaninfo", "termux-wifi-connect", "termux-nfc",
+        "hw-session", "bluetooth", "net",
+        "camera-capture", "camera-start", "camera-stop", "camera-latest",
         "phone-mcp",
     )
 

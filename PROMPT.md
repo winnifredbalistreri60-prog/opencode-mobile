@@ -1,12 +1,12 @@
 # PROMPT: продолжение разработки OpenCode Mobile
 
-Ты продолжаешь разработку **OpenCode Mobile**: неофициального Android-клиента для [OpenCode](https://github.com/anomalyco/opencode). Это не продукт команды OpenCode. Пакет `ru.dredd20.opencode`, Kotlin + Jetpack Compose, minSdk 26, targetSdk 35. Текущая версия 0.2.1 (versionCode 11), ветка `feature/plugins`. Репозиторий: github.com/winnifredbalistreri60-prog/opencode-mobile, там опубликованы `main` (0.2.0, `d09ab47`) и тег v0.1.3.
+Ты продолжаешь разработку **OpenCode Mobile**: неофициального Android-клиента для [OpenCode](https://github.com/anomalyco/opencode). Это не продукт команды OpenCode. Пакет `ru.dredd20.opencode`, Kotlin + Jetpack Compose, minSdk 26, targetSdk 35. Текущая версия 0.3.0 (versionCode 12), ветка `feature/hardware` от `feature/plugins` (`455d27b`, 0.2.1). Репозиторий: github.com/winnifredbalistreri60-prog/opencode-mobile, там опубликованы `main` (0.2.0, `d09ab47`) и теги v0.1.3 / v0.2.0. 0.2.1 и 0.3.0 пока только локально, на GitHub не пушить без согласия владельца.
 
 ## Как устроено
 
 - **Встроенный режим (основной).** Приложение скачивает ubuntu-base 24.04 (sha256 по `SHA256SUMS`) и распаковывает его в свою папку. Туда ставится официальный `opencode` linux-arm64 или linux-x64, затем запускается `opencode serve` на 127.0.0.1 со случайным портом и паролем. Всё это работает в PRoot (форк Termux, бинарники в `jniLibs`). UI здесь не свой: это официальный веб-интерфейс OpenCode во встроенном WebView (Basic auth, полифил `URL.parse` для WebView 80–125).
 - **Режимы Termux и Remote.** В режиме Termux `opencode serve` запускается в Termux через `RUN_COMMAND` с `PendingIntent`. Пароль передаётся через stdin и файл 0600. Установщик: `scripts/termux-install.sh` (glibc-repo + patchelf, работает только на arm64). Режим Remote подключается к уже работающему `opencode serve` по URL. Пароль хранится зашифрованным ключом Android Keystore.
-- **Phone API.** В гостевой системе есть `phone-client.sh` с командами, совместимыми с Termux:API (`termux-location`, `termux-battery-status` и т. д.), и MCP-сервер `phone`. Связь идёт через unix-сокет, обработку делает `PhoneHandlers`. Каждая категория доступа (датчики, геолокация, камера, буфер, уведомления, система, USB) включается в настройках отдельно.
+- **Phone API и Hardware API.** В гостевой системе есть `phone-client.sh` с командами, совместимыми с Termux:API (`termux-location`, `termux-usb`, `termux-wifi-scaninfo`, `termux-nfc` и т. д.), плюс свои `hw-session`, `bluetooth`, `net`, `camera-start`. MCP-сервер `phone` отдаёт те же инструменты. Связь через unix-сокет, обработка в `PhoneHandlers` / `hardware/HardwareHandlers`. Категории доступа включаются в настройках отдельно (NFC и камера по умолчанию выкл.).
 - **Плагины (MCP).** Экран «Плагины»: каталог Official MCP Registry с кэшем и офлайн-режимом. Удалённый Streamable HTTP сервер ставится в одно касание. Приложение сливает свои изменения в `opencode.json` и не перезаписывает его. После установки идёт `PUT /api/experimental/mcp/:name`. Шаблоны заголовков (`Bearer {key}`) заполняются, ключ можно сменить. Встроенный `phone` удалить нельзя.
 - **Автообновление.** Манифест `opencode-mobile-version.json` берётся из GitHub Releases (`releases/latest/download`). APK докачивается через `.part` и `Range`. Перед установкой проверяются sha256, пакет, versionCode и сертификат, установка идёт через PackageInstaller. Тестовая сборка `-PocmUpdateTestServer=http://10.0.2.2:8765` берёт обновления с локального сервера.
 
@@ -19,11 +19,12 @@
 | `serve/` | `ServeHealth.kt`, `ServeCredentials.kt`, `PortAllocator.kt`, `RemoteOrigin.kt` |
 | `backend/` | `Termux.kt` (RUN_COMMAND + PendingIntent), `TermuxScripts.kt` (serve/stop скрипты), `TermuxServe.kt`, `TermuxInstall.kt` |
 | `phone/` | `PhoneHandlers.kt`, `PhoneApiService.kt`, `UnixSocketServer.kt`, `LocationPlan.kt` |
+| `hardware/` | `HardwareHandlers.kt`, `HardwareSession.kt`, `BluetoothController.kt`, `WifiNetController.kt`, `NfcBridge.kt`, `CameraCaptureService.kt` |
 | `plugins/` | `Registry.kt` (реестр, имена, шаблоны заголовков), `PluginsController.kt`, `McpApi.kt`, `Installed.kt` |
 | `update/` | `AppUpdater.kt`, `UpdateDownload.kt` |
 | `prefs/` | `AppPrefs.kt`, `SecretPrefs.kt` (AES-GCM, Keystore) |
 | `ui/` | `Screens.kt`, `PluginsScreen.kt`, `TermuxUi.kt`, `OpenCodeWebView.kt`, `WebViewSupport.kt`, `StatusText.kt` |
-| `usb/` | `UsbController.kt` (список OTG, USB-serial) |
+| `usb/` | `UsbController.kt` (список интерфейсов, разрешение, USB-serial, HID, raw transfer), `UsbPermissionReceiver.kt` |
 
 Ассеты: `assets/phone/` (клиент Phone API), `assets/termux/termux-install.sh` (копия `scripts/`, тест проверяет, что они совпадают). Документы: `README.md` / `README.en.md`, `CHANGELOG.md`, `CHANGES.md`, `TESTPLAN.md`.
 
@@ -37,7 +38,7 @@ export JAVA_HOME=<JDK 17> ANDROID_HOME=<Android SDK, build-tools 36>
 scripts/make-release.sh --apk <apk> --out <dir>   # APK + .sha256 + манифест, ничего не публикует
 ```
 
-Unit-тесты (JUnit, 117 шт.) должны проходить. Termux-скрипты в тестах гоняются в настоящем bash. На эмуляторе проверяй обновление предыдущей версии через экран обновлений (данные и `opencode.json` должны сохраниться), экран «Плагины», циклы Start/Stop. Эмулятор держи один, с `-memory 2048..3072`: на хосте мало RAM и диска. Build-кэши и временные файлы чисти за собой.
+Unit-тесты (JUnit) должны проходить, включая разбор команд Hardware API и логику сессии. Termux-скрипты в тестах гоняются в настоящем bash. На эмуляторе проверяй обновление предыдущей версии через экран обновлений (данные и `opencode.json` должны сохраниться), экран «Плагины», циклы Start/Stop. Эмулятор держи один, с `-memory 2048..3072`: на хосте мало RAM и диска. Build-кэши и временные файлы чисти за собой.
 
 ## Правила
 
@@ -55,11 +56,13 @@ Unit-тесты (JUnit, 117 шт.) должны проходить. Termux-ск�
 - Серверы npx/Node, uvx/PyPI, Docker и SSE-only в каталоге помечены как недоступные.
 - В режиме Remote приложение не видит `opencode.json` сервера: установка из «Плагинов» действует до перезапуска сервера.
 - Сборки debug, сертификат debug.
+- Hardware API: живой обмен с USB/BLE/NFC/камерой на настоящем устройстве в этой сборке не проверялся (железа не было). Прошивка ESP32 через esptool не реализована (следующий этап).
 
 ## План следующих этапов
 
 1. **OAuth через Custom Tabs**: вход MCP-серверов через Chrome Custom Tabs с возвратом по redirect в приложение вместо внешнего браузера и веб-UI.
 2. **Node и uv в rootfs**: ставить Node.js (npx) и uv (uvx) в Ubuntu по запросу, чтобы запускать локальные MCP-серверы из реестра.
 3. **Браузер для агента**: управляемый браузер (Chromium/Playwright в rootfs или мост к WebView) как MCP-инструмент.
-4. **USB fd**: передавать файловый дескриптор USB-устройства (после разрешения Android) в гостевую систему, чтобы гостевые программы работали с OTG-устройствами напрямую, а не только через USB-serial.
-5. **Стабильный ключ**: перейти с debug-ключа на постоянный release-ключ (хранение вне репозитория, план миграции: одна переустановка или ротация через APK Signature Scheme v3).
+4. **USB fd**: передавать файловый дескриптор USB-устройства (после разрешения Android) в гостевую систему, чтобы гостевые программы работали с OTG-устройствами напрямую, а не только через USB-serial / raw transfer приложения.
+5. **Прошивка ESP32 (esptool по OTG)**: поставить esptool (и при необходимости Python) в rootfs или Termux и прошить плату через открытый USB-serial, с проверкой на настоящем arm64-устройстве.
+6. **Стабильный ключ**: перейти с debug-ключа на постоянный release-ключ (хранение вне репозитория, план миграции: одна переустановка или ротация через APK Signature Scheme v3).

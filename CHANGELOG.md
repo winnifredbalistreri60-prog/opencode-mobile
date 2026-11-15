@@ -2,6 +2,19 @@
 
 All notable releases of this unofficial OpenCode Mobile client. The official OpenCode CLI remains a separate project ([anomalyco/opencode](https://github.com/anomalyco/opencode)).
 
+## 0.3.0 — 2026-11-15
+
+Debug build, versionCode 12. Same debug certificate as 0.1.0–0.2.1 (`65b96eb0…2a90`). Installs over 0.2.1 and keeps the environment, `opencode.json` and settings.
+
+- **Hardware API** on top of the Phone API (same unix socket, Termux:API-compatible CLI, plus `hw-session`, `bluetooth`, `net`, `termux-nfc`, CameraX commands, and new phone-mcp tools). Sensitive categories stay off by default; Bluetooth / Wi-Fi connect / hardware sessions are on; NFC is off.
+- **USB Host:** interface listing, permission dialog, existing USB-serial (CDC/CH340/CP210x/FTDI), HID report read/write, raw bulk/interrupt/control transfers.
+- **Hardware sessions:** open/send/read/expect/log/close over USB serial, Bluetooth SPP or TCP, with a session log file. ESP32 flashing via esptool over OTG is deferred to the next stage (no bundled esptool, no hardware here to verify it).
+- **Bluetooth:** BLE scan/connect/GATT read/write/notify and classic SPP, with Android 12+ and legacy permissions.
+- **Wi-Fi and LAN:** scan (reports Android throttling), current connection, user-confirmed connect (`WifiNetworkSpecifier` / suggestion), ping, DNS, TCP port check, mDNS (`NsdManager`), TCP/UDP send/recv.
+- **NFC:** NDEF read/write, tag info, ISO-DEP/NfcA transceive; foreground `enableReaderMode` only, with a timeout.
+- **CameraX:** still frame and continuous capture (interval, resolution, JPEG ring buffer) in a camera foreground service with a visible notification. `termux-camera-photo` is unchanged.
+- 132 unit tests (was 117): command/session logic, camera ring pruning, UUID expansion and the phone-mcp tool list. Termux:API names are unchanged.
+
 ## 0.2.1 — 2026-11-15
 
 Debug build, versionCode 11. Same debug certificate as 0.1.0–0.2.0 (`65b96eb0…2a90`). Installs over 0.2.0 and keeps the environment, `opencode.json` and settings.

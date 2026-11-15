@@ -30,6 +30,8 @@ Third-party software
 
 - usb-serial-for-android (MIT) — https://github.com/mik3y/usb-serial-for-android
 
+- AndroidX Camera / CameraX (Apache-2.0) — https://developer.android.com/jetpack/androidx/releases/camera
+
 - termux-api-package CLI ideas/script names (MIT) — https://github.com/termux/termux-api-package
   Copyright (c) 2017-2021 Termux. This app does not include Termux:API
   (that Android app is GPLv3) and does not depend on it.

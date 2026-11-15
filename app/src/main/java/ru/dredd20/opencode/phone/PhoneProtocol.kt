@@ -57,9 +57,14 @@ object PhoneProtocol {
         "vibrate", "torch", "tts-speak", "volume", "wifi-connectioninfo",
         "share", "open-url", "telephony-call", "usb",
         "sms-send", "sms-list", "contact-list",
+        "hw-session", "bluetooth", "wifi-scaninfo", "wifi-connect", "net",
+        "nfc", "camera-capture", "camera-start", "camera-stop", "camera-latest",
     )
 
-    val DANGEROUS = setOf("sms-send", "sms-list", "contact-list", "camera-photo", "open-url")
+    val DANGEROUS = setOf(
+        "sms-send", "sms-list", "contact-list", "camera-photo", "open-url",
+        "camera-capture", "camera-start", "nfc",
+    )
 
     fun parse(line: String): PhoneRequest? = runCatching {
         val j = JSONObject(line)
@@ -79,13 +84,19 @@ object PhoneProtocol {
     fun categoryFor(cmd: String): String? = when (cmd) {
         "sensor", "battery-status" -> "sensors"
         "location", "wifi-connectioninfo" -> "location"
-        "camera-photo" -> "camera"
+        "camera-photo", "camera-capture", "camera-start", "camera-stop", "camera-latest" -> "camera"
         "clipboard-get", "clipboard-set" -> "clipboard"
         "notification", "toast" -> "notify"
         "vibrate", "torch", "tts-speak", "volume" -> "system"
         "sms-send", "sms-list", "contact-list" -> "comms"
         "telephony-call" -> "system"
         "usb" -> "usb"
+        "hw-session" -> "hardware"
+        "bluetooth" -> "bluetooth"
+        "wifi-connectioninfo", "wifi-scaninfo" -> "location"
+        "wifi-connect" -> "wifi"
+        "net" -> "system"
+        "nfc" -> "nfc"
         "share", "open-url" -> "system"
         else -> null
     }

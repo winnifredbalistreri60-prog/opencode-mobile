@@ -36,6 +36,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import ru.dredd20.opencode.R
 import ru.dredd20.opencode.i18n.tr
+import ru.dredd20.opencode.hardware.BluetoothController
+import ru.dredd20.opencode.hardware.HardwareHandlers
+import ru.dredd20.opencode.hardware.HardwareSessionStore
+import ru.dredd20.opencode.hardware.WifiNetController
 import ru.dredd20.opencode.runtime.EmbeddedRuntime
 import ru.dredd20.opencode.usb.UsbController
 import java.io.File
@@ -48,6 +52,11 @@ class PhoneHandlers(
     private val usb: UsbController,
     private val confirm: PhoneConfirmer,
 ) {
+    private val sessions = HardwareSessionStore(File(EmbeddedRuntime.hostDir(context), "hardware/sessions"))
+    private val bluetooth = BluetoothController(context)
+    private val wifiNet = WifiNetController(context)
+    private val hardware = HardwareHandlers(context, usb, confirm, sessions, bluetooth, wifiNet)
+
     fun handle(req: PhoneRequest): PhoneResponse {
         if (req.cmd !in PhoneProtocol.COMMANDS) {
             return PhoneResponse.error(req.id, tr("неизвестная команда ${req.cmd}", "unknown command ${req.cmd}"))
@@ -70,7 +79,17 @@ class PhoneHandlers(
                 "share" -> share(req)
                 "open-url" -> openUrl(req)
                 "telephony-call" -> dial(req)
-                "usb" -> usb(req)
+                "usb" -> hardware.usb(req)
+                "hw-session" -> hardware.session(req)
+                "bluetooth" -> { need(*bluetooth.permissions()); hardware.bluetooth(req) }
+                "wifi-scaninfo" -> { need(*wifiNet.wifiScanPermissions()); hardware.wifiScan(req) }
+                "wifi-connect" -> hardware.wifiConnect(req)
+                "net" -> hardware.net(req)
+                "nfc" -> hardware.nfc(req)
+                "camera-capture" -> { need(Manifest.permission.CAMERA); hardware.cameraCapture(req) }
+                "camera-start" -> { need(Manifest.permission.CAMERA); hardware.cameraStart(req) }
+                "camera-stop" -> hardware.cameraStop(req)
+                "camera-latest" -> hardware.cameraLatest(req)
                 "sms-send" -> smsSend(req)
                 "sms-list" -> smsList(req)
                 "contact-list" -> contacts(req)
@@ -402,21 +421,6 @@ class PhoneHandlers(
         return PhoneResponse.ok(req.id, mapOf("dialer" to true, "number" to number))
     }
 
-    private fun usb(req: PhoneRequest): PhoneResponse {
-        val sub = req.argString("sub") ?: "list"
-        return when (sub) {
-            "list", "l" -> PhoneResponse.ok(req.id, usb.list())
-            "open" -> {
-                val dev = req.argString("device") ?: return PhoneResponse.error(req.id, "device required")
-                PhoneResponse.ok(req.id, usb.open(dev, req.argInt("baud", 9600)))
-            }
-            "write" -> PhoneResponse.ok(req.id, usb.write(req.text()))
-            "read" -> PhoneResponse.ok(req.id, usb.read(req.argInt("timeout_ms", 1000)))
-            "close" -> PhoneResponse.ok(req.id, usb.close())
-            else -> PhoneResponse.error(req.id, "unknown usb subcommand $sub")
-        }
-    }
-
     private fun smsSend(req: PhoneRequest): PhoneResponse {
         need(Manifest.permission.SEND_SMS)
         val number = req.argString("number") ?: req.argString("to") ?: return PhoneResponse.error(req.id, "number required")
@@ -460,10 +464,13 @@ class PhoneHandlers(
         return PhoneResponse.ok(req.id, out)
     }
 
-    private fun need(permission: String) {
-        if (ContextCompat.checkSelfPermission(context, permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            confirm.requestPermission(permission)
-            throw SecurityException(permission)
+    private fun need(vararg permissions: String) {
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            missing.forEach { confirm.requestPermission(it) }
+            throw SecurityException(missing.joinToString(","))
         }
     }
 }

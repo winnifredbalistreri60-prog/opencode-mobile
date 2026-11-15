@@ -185,12 +185,16 @@ fun SettingsScreen(
             OutlinedButton(onClick = onPlugins) { Text(tr("Открыть «Плагины»", "Open “Plugins”")) }
             Text(tr("Доступы телефона", "Phone access"), style = MaterialTheme.typography.titleMedium)
             CategoryToggle(tr("Датчики и батарея", "Sensors and battery"), categories[AppPrefs.CAT_SENSORS] == true) { onCategory(AppPrefs.CAT_SENSORS, it) }
-            CategoryToggle(tr("Геолокация и Wi‑Fi info (выкл. по умолчанию)", "Location and Wi‑Fi info (off by default)"), categories[AppPrefs.CAT_LOCATION] == true) { onCategory(AppPrefs.CAT_LOCATION, it) }
+            CategoryToggle(tr("Геолокация и Wi-Fi (info и сканирование, выкл. по умолчанию)", "Location and Wi-Fi (info and scan, off by default)"), categories[AppPrefs.CAT_LOCATION] == true) { onCategory(AppPrefs.CAT_LOCATION, it) }
             CategoryToggle(tr("Камера (выкл. по умолчанию)", "Camera (off by default)"), categories[AppPrefs.CAT_CAMERA] == true) { onCategory(AppPrefs.CAT_CAMERA, it) }
             CategoryToggle(tr("Буфер обмена (выкл. по умолчанию)", "Clipboard (off by default)"), categories[AppPrefs.CAT_CLIPBOARD] == true) { onCategory(AppPrefs.CAT_CLIPBOARD, it) }
             CategoryToggle(tr("Уведомления и toast", "Notifications and toasts"), categories[AppPrefs.CAT_NOTIFY] == true) { onCategory(AppPrefs.CAT_NOTIFY, it) }
             CategoryToggle(tr("Система (вибрация, фонарик, TTS, громкость, share, набор номера)", "System (vibrate, torch, TTS, volume, share, dialer)"), categories[AppPrefs.CAT_SYSTEM] == true) { onCategory(AppPrefs.CAT_SYSTEM, it) }
             CategoryToggle(tr("USB", "USB"), categories[AppPrefs.CAT_USB] == true) { onCategory(AppPrefs.CAT_USB, it) }
+            CategoryToggle(tr("Bluetooth", "Bluetooth"), categories[AppPrefs.CAT_BLUETOOTH] == true) { onCategory(AppPrefs.CAT_BLUETOOTH, it) }
+            CategoryToggle(tr("Wi-Fi подключение", "Wi-Fi connect"), categories[AppPrefs.CAT_WIFI] == true) { onCategory(AppPrefs.CAT_WIFI, it) }
+            CategoryToggle(tr("Сессии с железом (USB serial, SPP, TCP)", "Hardware sessions (USB serial, SPP, TCP)"), categories[AppPrefs.CAT_HARDWARE] == true) { onCategory(AppPrefs.CAT_HARDWARE, it) }
+            CategoryToggle(tr("NFC (выкл. по умолчанию)", "NFC (off by default)"), categories[AppPrefs.CAT_NFC] == true) { onCategory(AppPrefs.CAT_NFC, it) }
             CategoryToggle(tr("Связь: SMS и контакты (выкл. по умолчанию)", "Messaging: SMS and contacts (off by default)"), categories[AppPrefs.CAT_COMMS] == true) { onCategory(AppPrefs.CAT_COMMS, it) }
             Text(tr("Обновления приложения", "App updates"), style = MaterialTheme.typography.titleMedium)
             Text(

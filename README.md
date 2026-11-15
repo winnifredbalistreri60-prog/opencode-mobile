@@ -4,28 +4,29 @@
 
 Приложение поднимает официальный Linux-бинарник `opencode serve` (linux-arm64 или linux-x64) в среде Ubuntu 24.04 через PRoot и показывает **официальный веб-UI** во встроенном WebView. Есть встроенный Phone API (имена команд совместимы с Termux:API, плюс MCP-сервер `phone`), чтобы агент мог работать с датчиками и функциями устройства.
 
-Пакет: `ru.dredd20.opencode`. Текущий выпуск: **0.2.1** (versionCode 11). Сборки в этом дереве — **debug**.
+Пакет: `ru.dredd20.opencode`. Текущий выпуск: **0.3.0** (versionCode 12). Сборки в этом дереве — **debug**.
 
 [English README](README.en.md) · [Список изменений](CHANGELOG.md) · [Лицензии третьих сторон](NOTICE)
 
-## Что умеет 0.2.x
+## Что умеет 0.3.0
 
 - Встроенный режим: Ubuntu 24.04 + официальный OpenCode 2.3.0 в PRoot, вход в веб-UI без ручного ввода пароля (нативный `/api/pair` + `/auth/connect/{code}`).
 - Режимы Termux и Remote (подключение к уже запущенному `opencode serve`).
-- Phone API и MCP `phone` (батарея, сенсоры, фонарик, буфер, toast, TTS, share, USB-список и др.). Чувствительные категории (геолокация, фото, SMS/контакты) по умолчанию выключены.
+- Phone API и MCP `phone` (батарея, сенсоры, фонарик, буфер, toast, TTS, share, USB и др.). Чувствительные категории (геолокация, фото, SMS/контакты, NFC) по умолчанию выключены.
+- **Hardware API (с 0.3.0).** USB Host (serial, HID, raw transfer), сессии с железом (`expect`, журнал), Bluetooth LE и SPP, Wi-Fi scan/connect и сетевая диагностика, NFC на переднем плане, захват кадров CameraX с уведомлением. Подробности в разделе [Hardware API](#hardware-api).
 - Уведомление «ответ агента готов», когда приложение в фоне и сессия завершила ход (`session.idle` / `session.execution.succeeded`).
 - Телефонный и планшетный layout (широкие настройки при ширине ≥ 840 dp).
 - Автообновление из GitHub Releases этого репозитория (с 0.1.3): проверка sha256 и подписи, установка через системный установщик.
 - **Плагины (с 0.2.0).** Экран «Плагины» (значок пазла сверху или «Настройки приложения → Плагины»): каталог удалённых MCP-серверов из Official MCP Registry с поиском, кэшем и офлайн-режимом, установка в один тап (запись в `opencode.json` + немедленное подключение), удаление, список установленных со статусом, поля для заголовков/ключей. Для входа через OAuth кнопка «Войти» открывает «Настройки → Расширения → MCP» в веб-UI. Встроенный `phone` не удаляется.
 - `opencode.json` больше не перезаписывается при установке и запуске: приложение только дописывает свои ключи (`update`, `mcp.servers.phone`), а ваши MCP, плагины и настройки остаются. Битый файл сохраняется как `opencode.json.broken-<время>.bak`.
 
-Пока **не** входит: локальные MCP через npx/uvx (в среде нет Node.js и uv; такие серверы в каталоге помечены «недоступно пока»), SSE-only серверы (OpenCode 2.3 подключает удалённые MCP по Streamable HTTP), вход OAuth через Custom Tabs (этап 2), встроенный агентский браузер, передача raw USB fd (`termux-usb -e` / SCM_RIGHTS), release-подпись и публикация в магазинах.
+Пока **не** входит: локальные MCP через npx/uvx (в среде нет Node.js и uv; такие серверы в каталоге помечены «недоступно пока»), SSE-only серверы (OpenCode 2.3 подключает удалённые MCP по Streamable HTTP), вход OAuth через Custom Tabs, встроенный агентский браузер, передача raw USB fd (`termux-usb -e` / SCM_RIGHTS), прошивка ESP32 через esptool по OTG, release-подпись и публикация в магазинах.
 
 ## Установка
 
 Распространяется как debug-APK, не через Google Play. Можно ставить поверх предыдущей 0.1.x с той же подписью, среда и `opencode.json` сохраняются.
 
-1. Скачайте `opencode-mobile-0.2.1.apk` из [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (когда релиз будет опубликован) или соберите сами.
+1. Скачайте `opencode-mobile-0.3.0.apk` из [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (когда релиз будет опубликован) или соберите сами.
 2. Разрешите установку из неизвестного источника и установите пакет.
 3. На экране Setup подтвердите дисклеймер и нажмите **Install**. Нужны интернет и примерно 150 МБ сети / ~800 МБ на диске (ubuntu-base + OpenCode CLI).
 4. После «Ready: OpenCode 2.3.0» нажмите **Start**. Откроется официальный веб-UI.
@@ -63,7 +64,7 @@
 
 1. Установите Termux и откройте его один раз.
 2. В OpenCode Mobile: Настройки приложения → Режим: Termux → **«Скопировать команду установки»**. В Termux долгое нажатие → Paste, затем Enter. Скрипт сохраняется в `~/ocm-termux-install.sh`, повторный запуск безопасен и обновляет бинарник.
-   Тот же скрипт лежит в репозитории: `scripts/termux-install.sh`. Когда 0.2.1 попадёт в `main`, можно и так:
+   Тот же скрипт лежит в репозитории: `scripts/termux-install.sh`. Когда эта версия попадёт в `main`, можно и так:
    `curl -fsSL https://raw.githubusercontent.com/winnifredbalistreri60-prog/opencode-mobile/main/scripts/termux-install.sh | bash`
 3. Разрешите приложению «запускать команды в Termux» (кнопка на экране или Настройки Android → Приложения → OpenCode Mobile → Разрешения).
 4. Нажмите «Запустить». Пароль сервера передаётся через stdin и файл 0600 в `~/.opencode-mobile/`, а не в аргументах. «Стоп» завершает только наш `opencode serve` (по pid и порту). Если запуск не удался, текст ошибки из Termux (stderr и код выхода) показывается на экране и пишется в `termux.log`.
@@ -75,6 +76,22 @@
 ### Удалённый сервер
 
 Укажите полный URL (`http://host:port` или `https://…`). Неполный адрес вроде `http://` не принимается. Для `http://` вне loopback показывается предупреждение о cleartext.
+
+
+## Hardware API
+
+С 0.3.0 поверх Phone API есть собственный Hardware API. Совместимость с именами Termux:API сохранена (`termux-usb`, `termux-wifi-scaninfo`, `termux-nfc`, `termux-camera-photo` и остальные прежние команды). Новые команды тоже доступны как CLI в rootfs и как инструменты MCP `phone`.
+
+| Область | Команды | Заметки |
+|---|---|---|
+| USB Host | `termux-usb list\|permission\|open\|write\|read\|close`, `hid-read`, `hid-write`, `transfer` | Список устройств и интерфейсов, системное разрешение, USB-serial (CDC/CH340/CP210x/FTDI), HID-репорты, bulk/interrupt/control. |
+| Сессия | `hw-session open\|send\|read\|expect\|log\|close` | Транспорт `usb-serial`, `bt-spp` или `tcp`. `expect` по regex, журнал в `/opencode-host/hardware/sessions/`. |
+| Bluetooth | `bluetooth scan\|connect\|services\|read\|write\|notify\|disconnect`, `spp-connect\|spp-send\|spp-read\|spp-close` | BLE GATT и классический SPP. На Android 12+ нужны `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT`. |
+| Wi-Fi и сеть | `termux-wifi-scaninfo`, `termux-wifi-connectioninfo`, `termux-wifi-connect`, `net ping\|dns\|port\|mdns\|tcp\|udp` | Сканирование учитывает троттлинг Android. Подключение — только с подтверждением пользователя (Android 10+). |
+| NFC | `termux-nfc read\|info\|write\|transceive` | Только когда приложение на экране (`enableReaderMode`), с таймаутом ожидания метки. |
+| Камера | `camera-capture`, `camera-start`, `camera-stop`, `camera-latest` | CameraX, JPEG в каталог проекта, кольцевой буфер, foreground-сервис с уведомлением. Старый `termux-camera-photo` не убран. |
+
+Категории Bluetooth, Wi-Fi подключение и сессии с железом по умолчанию включены; NFC, камера и геолокация (вместе со сканированием Wi-Fi) выключены. Прошивка ESP32 через esptool в 0.3.0 не сделана: это следующий этап.
 
 ## Сборка из исходников
 

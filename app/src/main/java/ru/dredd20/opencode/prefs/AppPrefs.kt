@@ -65,7 +65,7 @@ object AppPrefs {
 
     /** Sensitive categories default off so a freshly installed agent cannot use them. */
     fun categoryDefault(key: String): Boolean = when (key) {
-        CAT_LOCATION, CAT_CAMERA, CAT_CLIPBOARD, CAT_COMMS -> false
+        CAT_LOCATION, CAT_CAMERA, CAT_CLIPBOARD, CAT_COMMS, CAT_NFC -> false
         else -> true
     }
 
@@ -83,4 +83,8 @@ object AppPrefs {
     const val CAT_SYSTEM = "system" // vibrate, torch, tts, volume, battery, wifi
     const val CAT_COMMS = "comms"   // sms, contacts — default off
     const val CAT_USB = "usb"
+    const val CAT_BLUETOOTH = "bluetooth"
+    const val CAT_NFC = "nfc"
+    const val CAT_WIFI = "wifi"
+    const val CAT_HARDWARE = "hardware"
 }

@@ -40,6 +40,19 @@ class PhoneProtocolTest {
         assertFalse("telephony-call" in PhoneProtocol.DANGEROUS)
         assertTrue("battery-status" in PhoneProtocol.COMMANDS)
         assertFalse("eval" in PhoneProtocol.COMMANDS)
+        for (cmd in listOf("hw-session", "bluetooth", "wifi-scaninfo", "wifi-connect", "net", "nfc",
+                "camera-capture", "camera-start", "camera-stop", "camera-latest")) {
+            assertTrue(cmd, cmd in PhoneProtocol.COMMANDS)
+        }
+        assertEquals("bluetooth", PhoneProtocol.categoryFor("bluetooth"))
+        assertEquals("nfc", PhoneProtocol.categoryFor("nfc"))
+        assertEquals("camera", PhoneProtocol.categoryFor("camera-start"))
+        assertEquals("hardware", PhoneProtocol.categoryFor("hw-session"))
+        assertEquals("location", PhoneProtocol.categoryFor("wifi-scaninfo"))
+        assertEquals("wifi", PhoneProtocol.categoryFor("wifi-connect"))
+        assertEquals("system", PhoneProtocol.categoryFor("net"))
+        assertTrue("camera-start" in PhoneProtocol.DANGEROUS)
+        assertTrue("nfc" in PhoneProtocol.DANGEROUS)
     }
 
     @Test

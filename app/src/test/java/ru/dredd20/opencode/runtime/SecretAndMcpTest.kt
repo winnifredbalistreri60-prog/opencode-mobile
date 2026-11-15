@@ -77,6 +77,28 @@ class SecretAndMcpTest {
         assertEquals("2.0", j.getString("jsonrpc"))
         assertEquals(1, j.getInt("id"))
         assertEquals("phone-mcp", j.getJSONObject("result").getJSONObject("serverInfo").getString("name"))
+        assertEquals("0.3.0", j.getJSONObject("result").getJSONObject("serverInfo").getString("version"))
+    }
+
+    @Test
+    fun phoneMcpListsHardwareTools() {
+        val script = File("src/main/assets/phone/phone-mcp.py")
+        val pb = ProcessBuilder("python3", script.absolutePath)
+        pb.redirectErrorStream(true)
+        val p = pb.start()
+        p.outputStream.write("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n".toByteArray())
+        p.outputStream.flush()
+        p.outputStream.close()
+        val out = p.inputStream.bufferedReader().readText()
+        val code = p.waitFor()
+        assertEquals("phone-mcp tools/list exited $code: $out", 0, code)
+        val line = out.lineSequence().first { it.isNotBlank() }
+        val tools = JSONObject(line).getJSONObject("result").getJSONArray("tools")
+        val names = (0 until tools.length()).map { tools.getJSONObject(it).getString("name") }.toSet()
+        for (n in listOf("usb_hid_read", "hw_session_expect", "bluetooth_scan", "bluetooth_spp_connect",
+                "wifi_scan", "wifi_connect", "net_mdns", "nfc_read", "camera_start", "camera_latest")) {
+            assertTrue("missing tool $n in $names", n in names)
+        }
     }
 
     @Test
@@ -86,6 +108,10 @@ class SecretAndMcpTest {
         assertFalse(AppPrefs.categoryDefault(AppPrefs.CAT_CLIPBOARD))
         assertFalse(AppPrefs.categoryDefault(AppPrefs.CAT_COMMS))
         assertTrue(AppPrefs.categoryDefault(AppPrefs.CAT_SENSORS))
+        assertTrue(AppPrefs.categoryDefault(AppPrefs.CAT_BLUETOOTH))
+        assertTrue(AppPrefs.categoryDefault(AppPrefs.CAT_WIFI))
+        assertTrue(AppPrefs.categoryDefault(AppPrefs.CAT_HARDWARE))
+        assertFalse(AppPrefs.categoryDefault(AppPrefs.CAT_NFC))
         assertEquals("system", PhoneProtocol.categoryFor("telephony-call"))
         assertEquals("comms", PhoneProtocol.categoryFor("sms-send"))
         assertFalse(PhoneProtocol.DANGEROUS.contains("telephony-call"))

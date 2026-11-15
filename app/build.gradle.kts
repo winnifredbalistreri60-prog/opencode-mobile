@@ -15,8 +15,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Test-only overrides (-PocmVersionCode / -PocmVersionName) build the fake 0.1.4 for update tests.
-        versionCode = (providers.gradleProperty("ocmVersionCode").orNull ?: "11").toInt()
-        versionName = providers.gradleProperty("ocmVersionName").orNull ?: "0.2.1"
+        versionCode = (providers.gradleProperty("ocmVersionCode").orNull ?: "12").toInt()
+        versionName = providers.gradleProperty("ocmVersionName").orNull ?: "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         // Only arm64 and x86_64 have an official OpenCode binary. The APK still
@@ -101,6 +101,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.androidx.webkit)
     implementation(libs.usb.serial)
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

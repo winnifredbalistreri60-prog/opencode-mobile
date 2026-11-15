@@ -1,61 +1,70 @@
-# План проверки OpenCode Mobile 0.2.1-debug (Termux, автообновление, плагины)
+# План проверки OpenCode Mobile 0.3.0-debug (Hardware API)
 
-APK: `opencode-mobile-0.2.1.apk` (debug, сертификат `65b96eb0…2a90`, versionCode 11). Ставится поверх 0.2.0 (`-r`).
-Тестовые APK лежат в `test-apks/`: `opencode-mobile-0.2.1-testserver.apk` (vc 11) и `opencode-mobile-0.2.2-test.apk` (vc 12, 0.2.2-test).
-Обе сборки берут обновления с сервера `http://10.0.2.2:8765`. Нужен ещё `0.2.0/test-apks/opencode-mobile-0.2.0-testserver.apk`. Ничего не публиковать.
+Неофициальный клиент, пакет `ru.dredd20.opencode`, versionCode **12**.
+Подпись та же, что у 0.2.1 (SHA-256 `65b96eb0…2a90`). Ставить поверх 0.2.1, данные и `opencode.json` должны сохраниться.
 
-Результаты разработчика: эмулятор ocm-update35 (Pixel, API 35, x86_64, `-memory 3072`), 15.11.2026, 17:40–19:00 (UTC+7).
-Номера в скобках — скриншоты из `screenshots/`. ✅ = проверено, ⚠️ = проверено частично, ⬜ = не проверено.
+Юнит-тесты (`:app:testDebugUnitTest`) обязательны до ручной проверки. Живое железо в этой сборке могло быть недоступно: тогда отметьте пункт как «не проверено» и сохраните текст ошибки приложения.
 
-## Сервер обновлений с докачкой
+## A. Регрессия 0.2.1
 
-Сервер должен отдавать `Accept-Ranges` и `206`. Простой `python3 -m http.server` Range не поддерживает, поэтому для пунктов 5–6 нужен свой сервер. Можно взять любой с поддержкой Range и ограничением скорости, чтобы успеть оборвать загрузку.
-```
-scripts/make-release.sh --apk test-apks/opencode-mobile-0.2.1-testserver.apk \
-   --download-base http://10.0.2.2:8765/releases/download/v0.2.1 --out srv/releases/download/v0.2.1
-cp srv/releases/download/v0.2.1/opencode-mobile-version.json srv/releases/latest/download/
-```
+1. Встроенный режим: Install (если нужно) → Start → веб-UI открывается, пароль не спрашивают.
+2. Настройки: категории телефона, автопроверка обновлений, журнал.
+3. Плагины: каталог открывается (онлайн или из кэша), встроенный `phone` нельзя удалить.
+4. Start/Stop несколько циклов, процесс не падает.
+5. CLI в rootfs после Start: `termux-battery-status`, `termux-usb` (старые имена на месте).
 
-## A. Автообновление (регрессия и run4)
+## B. USB Host
 
-1. ✅ 0.2.0-testserver с данными (`opencode.json`: phone и deepwiki-user; в prefs `remote_password` открытым текстом) → «Проверить обновления» → 0.2.0 (10) → 0.2.1 (11) (20) → «Скачать» → системное «Update». Итог: vc 11, `firstInstallTime` прежний, sha256 `opencode.json` прежний (`20e5194a…`). APK на устройстве совпадает с опубликованным, sha256 сверен. Прогнано на финальной сборке.
-2. ✅ Пароль Remote: после первого запуска 0.2.1 в prefs только `remote_password_enc` (`v1:…`), открытого `remote_password` нет. В режиме Remote кнопка «Показать» выводит исходный пароль.
-3. ✅ Тап по подписи «Проверять обновления при запуске…» переключает `update_auto_check` false/true (22).
-4. ✅ Обрыв сети на 0.2.1 → 0.2.2-test (`svc wifi/data disable` во время загрузки): видно «Загрузка не удалась: Software caused connection abort. «Повторить» продолжит с места обрыва.» (23). Файл `.part` (5,7 МБ) остался.
-5. ✅ Сеть обратно → «Повторить» → в журнале сервера `Range=bytes=5701632-` и ответ `206`, sha256 файла совпал, открылось системное «Update» (24).
-6. ✅ Cancel → «Файл проверен» → «Позже» → файл удалён из `cache/app-update` → «Проверить обновления» показывает «Скачать», а не «Файл проверен» (25). Испорченный файл (1 байт) ведёт себя так же.
-7. ✅ 0.2.1 → 0.2.2-test до конца на финальной сборке: vc 12, `opencode.json` прежний (34).
+1. Без устройства: `termux-usb list` возвращает пустой список, без падения.
+2. С OTG-устройством: в списке есть `key`, vendor/product, интерфейсы и конечные точки, `usbSerial` для CDC/CH340/CP210x/FTDI.
+3. `termux-usb permission <key>` показывает системный диалог; повторный `open` после «Разрешить» открывает порт.
+4. Serial: `open` + запись + `read` (или `hw-session`) на USB-UART / ESP32.
+5. Если устройство HID: `hid-read` / `hid-write`. Иначе честная ошибка «нет HID-интерфейса».
+6. `usb transfer` (bulk/control) на известном устройстве или понятная ошибка.
 
-## B. Termux (run3)
+## C. Сессии
 
-8. ✅ Режим Termux: блок с шагами, «Скопировать команду установки», «Открыть Termux», «Разрешить запуск команд в Termux» (05, 06, 11). После выдачи разрешения кнопка разрешения исчезает.
-9. ✅ Start без `allow-external-apps`: под кнопкой и в `termux.log` появляется текст ошибки Termux (`RunCommandService requires allow-external-apps…`) (07). Это путь PendingIntent. В 0.2.1 текст очищен от markdown и дополнен подсказкой.
-10. ✅ Копирование: долгое нажатие в Termux → Paste → Enter (08, 09). Скрипт работает на свежем Termux 0.118.3 x86_64: glibc-repo, glibc-runner, patchelf, загрузка `opencode-linux-x64.tar.gz`, sha256 ok, patchelf, лаунчер, allow-external-apps (10, 12). Найденная проблема: на свежем bootstrap `patchelf` падал с `CANNOT LINK EXECUTABLE … __hash_memory` (старый libc++). Исправлено: скрипт ставит `libc++` и проверяет, что `patchelf` запускается.
-11. ⚠️ `opencode --version` на x86_64 Android: `Bad system call` (SIGSYS, 159). Strace показал `access()` в glibc ld.so, его блокирует seccomp приложений на x86_64. Скрипт и приложение теперь называют причину. Start из приложения показывает «opencode в Termux не запускается…» (12). Полноценный opencode в Termux на arm64 **не проверен**. Попытка поставить arm64 Termux через трансляцию не удалась: bootstrap не встал.
-12. ✅ Обвязка serve/stop с фальшивым `opencode` (python в Termux, отвечает на `/api/info` только с Basic-паролем из `OPENCODE_PASSWORD`): Start из приложения → `RUNNING — Termux 127.0.0.1:<порт>`, WebView показывает страницу фальшивого сервера (13). Значит пароль дошёл через stdin и файл. В `ps` аргументы без пароля. `~/.opencode-mobile` 0700, файлы 0600 (14).
-13. ✅ Stop при запущенном «чужом» `opencode serve --port 4999`: наш процесс завершён, чужой жив, `serve.env` удалён (15), в `termux.log` есть `stop (port …): stopped` (`termux.log-excerpt.txt`). Повтор на финальной сборке прошёл.
+1. `hw-session open --transport usb-serial` (после `usb open`) или `tcp --target host:port`.
+2. `send` / `read` / `expect` по шаблону; при несовпадении `matched=false` и буфер не теряется.
+3. Файл журнала `/opencode-host/hardware/sessions/<id>.log` содержит TX/RX.
+4. `close` и повторный `send` дают ошибку «session is closed» / «not found».
+5. Прошивка esptool в 0.3.0 **не ожидается** (следующий этап).
 
-## C. Встроенный режим и мелочи run3
+## D. Bluetooth
 
-14. ✅ Статус: «RUNNING — Сервер слушает 127.0.0.1:46657», порт один раз. Пустой статус выводится как «IDLE» (28).
-15. ✅ Три цикла: «Стоп» → сразу после «Остановлено» «Запустить» → RUNNING каждый раз. Во время STOPPING кнопка «Запустить» неактивна (так задумано).
-16. ⬜ Ошибка Setup один раз: проверено только юнит-тестом (`StatusTextTest`).
-17. ⬜ `termux-location` со свежей точкой (`geo fix`): только юнит-тест `LocationPlanTest`, на устройстве не проверялось.
+1. Без разрешения: команда возвращает `needs_permission` и поднимает системный запрос (Android 12+: SCAN/CONNECT).
+2. Если адаптер выключен: понятная ошибка «Bluetooth выключен».
+3. `bluetooth scan`: список с address / rssi / name (если есть).
+4. BLE: connect → services → read/write/notify на тестовом устройстве.
+5. SPP: `spp-connect` / send / read к классическому модулю, затем `spp-close`.
 
-## D. Плагины (run5)
+## E. Wi-Fi и сеть
 
-18. ✅ `ai.smithery/smithery-notion`: под полем Authorization написано «Будет записано как: Bearer ‹ваш ввод›» (30). Ввод `fake-key-021` → в `opencode.json` записано `"Authorization": "Bearer fake-key-021"`.
-19. ✅ Установленный сервер с ключом и статусом `needs_auth`: «Сервер не принял ключ…», кнопки «Сменить ключ» и «Удалить», кнопки «Войти» нет (31). «Сменить ключ» (32) → `fake-key-022` → в файле `Bearer fake-key-022`, «Ключ … обновлён». Ключей в `host/logs` нет.
-20. ✅ `com.notion/mcp`: в каталоге и в карточке название `notion`, имя по умолчанию `notion` (29, 33).
-21. ✅ Удаление smithery-notion: `opencode.json` по содержимому равен исходному.
-22. ✅ Фильтр каталога «Скрыть то, что телефон пока не запустит…» переключается тапом по подписи (checked true/false/true).
-23. ✅ Регрессия «Плагины»: установленные phone и deepwiki-user подключены, каталог реестра грузится (26, 27).
-24. ⬜ Remote: тексты «Нет в opencode.json» и диалог удаления на устройстве не проверены, нужен свой `opencode serve`. Логика: пометка только во встроенном режиме.
-25. ⬜ Сообщение для WebView 91: только юнит-тест.
+1. Категория «геолокация» выкл.: `termux-wifi-scaninfo` отказано настройками.
+2. Вкл. + разрешение: сканирование возвращает сети; повторные частые вызовы могут дать `throttled=true` и прошлый список.
+3. `termux-wifi-connectioninfo` показывает текущую сеть.
+4. `termux-wifi-connect --ssid …`: системный запрос, отказ и согласие пользователя.
+5. `net ping`, `net dns`, `net port`, `net mdns` в локальной сети. `net tcp` / `net udp` к известному эхо-сервису, если есть.
 
-## Не проверено
+## F. NFC
 
-- Настоящий arm64-телефон, Termux с настоящим opencode, Android 8–12.
-- OAuth-вход до конца, реальный ключ Smithery.
-- Remote-режим в «Плагинах» после правок run5.
-- Публикация на GitHub Releases (ничего не публиковалось).
+1. На устройстве без NFC: ошибка «NFC нет».
+2. Приложение на экране: `termux-nfc read --timeout-ms 15000`, поднести метку, увидеть NDEF или info.
+3. Если приложение в фоне: оно должно подняться; без метки до таймаута — честная ошибка.
+4. `transceive` на ISO-DEP/NfcA. `write` спрашивает подтверждение и пишет NDEF.
+
+## G. Камера
+
+1. Категория «Камера» выкл. по умолчанию: `camera-start` отказано.
+2. Вкл. + разрешение: `camera-start` показывает постоянное уведомление «захват кадров».
+3. `camera-latest` и `camera-capture` пишут JPEG в `/opencode-host/camera/` (или указанный каталог). Кольцо не растёт без ограничения.
+4. `camera-stop` снимает уведомление. `termux-camera-photo` по-прежнему открывает системную камеру.
+
+## Не проверено, если нет железа или эмулятор
+
+- Живой USB-serial / HID / raw transfer, прошивка ESP32 (esptool не входит в 0.3.0).
+- BLE GATT и классический SPP с настоящей периферией.
+- NFC-метки, запись NDEF.
+- Непрерывный захват CameraX на физическом устройстве (на эмуляторе камера может быть заглушкой).
+- Подключение к Wi-Fi через specifier на Android 8–9 (ожидается отказ с пояснением: нужен Android 10+).
+- Реальный opencode в Termux на arm64, OAuth, Android 8–11 — как в 0.2.1.

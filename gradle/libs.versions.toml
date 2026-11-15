@@ -11,6 +11,7 @@ lifecycle = "2.10.0"
 okhttp = "5.4.0"
 usb-serial = "3.8.1"
 webkit = "1.14.0"
+camerax = "1.4.2"
 
 [libraries]
 androidx-compose-material3-window-size = { module = "androidx.compose.material3:material3-window-size-class" }
@@ -34,6 +35,9 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 usb-serial = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usb-serial" }
 androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
+androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "camerax" }
+androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
 org-json = { module = "org.json:json", version = "20250517" }
 
 [plugins]

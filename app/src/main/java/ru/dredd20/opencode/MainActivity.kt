@@ -74,6 +74,7 @@ import org.json.JSONObject
 import ru.dredd20.opencode.backend.Termux
 import ru.dredd20.opencode.backend.TermuxServe
 import ru.dredd20.opencode.i18n.tr
+import ru.dredd20.opencode.hardware.NfcBridge
 import ru.dredd20.opencode.phone.PhonePending
 import ru.dredd20.opencode.prefs.AppPrefs
 import ru.dredd20.opencode.prefs.RuntimeMode
@@ -185,9 +186,11 @@ class MainActivity : ComponentActivity() {
         AppVisibility.resumed = true
         permTick++
         ru.dredd20.opencode.update.AppUpdater.onResume(this)
+        NfcBridge.onResume(this)
     }
 
     override fun onPause() {
+        NfcBridge.onPause(this)
         AppVisibility.resumed = false
         super.onPause()
     }
@@ -545,7 +548,8 @@ class MainActivity : ComponentActivity() {
         var pass by remember { mutableStateOf(AppPrefs.remotePassword(this)) }
         val cats = listOf(
             AppPrefs.CAT_SENSORS, AppPrefs.CAT_LOCATION, AppPrefs.CAT_CAMERA, AppPrefs.CAT_CLIPBOARD,
-            AppPrefs.CAT_NOTIFY, AppPrefs.CAT_SYSTEM, AppPrefs.CAT_USB, AppPrefs.CAT_COMMS,
+            AppPrefs.CAT_NOTIFY, AppPrefs.CAT_SYSTEM, AppPrefs.CAT_USB, AppPrefs.CAT_BLUETOOTH,
+            AppPrefs.CAT_WIFI, AppPrefs.CAT_HARDWARE, AppPrefs.CAT_NFC, AppPrefs.CAT_COMMS,
         ).associateWith { AppPrefs.categoryEnabled(this, it) }
         var catState by remember { mutableStateOf(cats) }
         var autoUpdate by remember { mutableStateOf(AppPrefs.updateAutoCheck(this)) }

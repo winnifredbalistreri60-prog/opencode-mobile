@@ -40,6 +40,62 @@ while i < len(argv):
         args["exec"] = True; i += 1
     elif a in ("-b", "--baud") and i + 1 < len(argv):
         args["baud"] = int(argv[i+1]); i += 2
+    elif a in ("--hex",) and i + 1 < len(argv) and not argv[i+1].startswith("-"):
+        args["hex"] = argv[i+1]; i += 2
+    elif a == "--hex":
+        args["encoding"] = "hex"; i += 1
+    elif a in ("--pattern",) and i + 1 < len(argv):
+        args["pattern"] = argv[i+1]; i += 2
+    elif a in ("--timeout-ms", "--timeout") and i + 1 < len(argv):
+        args["timeout_ms"] = int(argv[i+1]); i += 2
+    elif a in ("--transport",) and i + 1 < len(argv):
+        args["transport"] = argv[i+1]; i += 2
+    elif a in ("--target",) and i + 1 < len(argv):
+        args["target"] = argv[i+1]; i += 2
+    elif a in ("--address",) and i + 1 < len(argv):
+        args["address"] = argv[i+1]; i += 2
+    elif a in ("--uuid",) and i + 1 < len(argv):
+        args["uuid"] = argv[i+1]; i += 2
+    elif a in ("--ssid",) and i + 1 < len(argv):
+        args["ssid"] = argv[i+1]; i += 2
+    elif a in ("--password",) and i + 1 < len(argv):
+        args["password"] = argv[i+1]; i += 2
+    elif a in ("--host",) and i + 1 < len(argv):
+        args["host"] = argv[i+1]; i += 2
+    elif a in ("--port",) and i + 1 < len(argv):
+        args["port"] = int(argv[i+1]); i += 2
+    elif a in ("--type",) and i + 1 < len(argv):
+        args["type"] = argv[i+1]; i += 2
+    elif a in ("--direction",) and i + 1 < len(argv):
+        args["direction"] = argv[i+1]; i += 2
+    elif a in ("--endpoint",) and i + 1 < len(argv):
+        args["endpoint"] = int(argv[i+1], 0); i += 2
+    elif a in ("--interface",) and i + 1 < len(argv):
+        args["interface"] = int(argv[i+1], 0); i += 2
+    elif a in ("--interval-ms", "--interval") and i + 1 < len(argv):
+        args["interval_ms"] = int(argv[i+1]); i += 2
+    elif a in ("--resolution",) and i + 1 < len(argv):
+        args["resolution"] = argv[i+1]; i += 2
+    elif a in ("--ring",) and i + 1 < len(argv):
+        args["ring"] = int(argv[i+1]); i += 2
+    elif a in ("--session",) and i + 1 < len(argv):
+        args["session"] = argv[i+1]; i += 2
+    elif a in ("--uri",) and i + 1 < len(argv):
+        args["uri"] = argv[i+1]; i += 2
+    elif a in ("--classic",):
+        args["classic"] = True; i += 1
+    elif a in ("--suggestion",):
+        args["suggestion"] = True; i += 1
+    elif a in ("--literal",):
+        args["literal"] = True; i += 1
+    elif a.startswith("--") and i + 1 < len(argv) and not argv[i+1].startswith("-"):
+        key = a[2:].replace("-", "_")
+        val = argv[i+1]
+        try:
+            args[key] = int(val, 0) if val.lower().startswith("0x") or val.isdigit() or (val.startswith("-") and val[1:].isdigit()) else val
+        except ValueError:
+            args[key] = val
+        i += 2
     elif a.startswith("-"):
         positional.append(a); i += 1
     else:
@@ -58,9 +114,12 @@ if positional:
         if len(positional) > 1:
             try: args["volume"] = int(positional[1])
             except ValueError: pass
-    if cmd in ("usb",) and positional:
-        args["sub"] = positional[0]
-        args["device"] = positional[1] if len(positional) > 1 else None
+    if cmd in ("usb", "hw-session", "bluetooth", "nfc", "net") and positional:
+        args.setdefault("sub", positional[0])
+        if cmd == "usb" and len(positional) > 1 and "device" not in args:
+            args["device"] = positional[1]
+        if cmd == "bluetooth" and len(positional) > 1 and "address" not in args and positional[0] in ("connect", "spp-connect"):
+            args["address"] = positional[1]
 print(json.dumps(args))
 PY
 )"
