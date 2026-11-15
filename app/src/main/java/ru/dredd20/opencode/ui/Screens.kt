@@ -124,6 +124,7 @@ fun SettingsScreen(
     onUpdateAutoCheck: (Boolean) -> Unit = {},
     onCheckUpdates: () -> Unit = {},
     updateSource: String = "",
+    onPlugins: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var showLogs by remember { mutableStateOf(twoPane) }
@@ -174,6 +175,9 @@ fun SettingsScreen(
                 OutlinedButton(onClick = onStop, enabled = running || mode == RuntimeMode.REMOTE) { Text(tr("Стоп", "Stop")) }
                 OutlinedButton(onClick = onUpdate) { Text(tr("Обновить OpenCode", "Update OpenCode")) }
             }
+            Text(tr("Плагины (MCP)", "Plugins (MCP)"), style = MaterialTheme.typography.titleMedium)
+            Text(tr("Каталог удалённых MCP-серверов и установленные серверы.", "Catalog of remote MCP servers and installed servers."), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onPlugins) { Text(tr("Открыть «Плагины»", "Open “Plugins”")) }
             Text(tr("Доступы телефона", "Phone access"), style = MaterialTheme.typography.titleMedium)
             CategoryToggle(tr("Датчики и батарея", "Sensors and battery"), categories[AppPrefs.CAT_SENSORS] == true) { onCategory(AppPrefs.CAT_SENSORS, it) }
             CategoryToggle(tr("Геолокация и Wi‑Fi info (выкл. по умолчанию)", "Location and Wi‑Fi info (off by default)"), categories[AppPrefs.CAT_LOCATION] == true) { onCategory(AppPrefs.CAT_LOCATION, it) }

@@ -225,6 +225,13 @@ class OpenCodeWebView @JvmOverloads constructor(
         }
     }
 
+    /** Navigate the UI to a path on the bound origin (e.g. Settings → Extensions for MCP sign-in). */
+    fun openPath(path: String) {
+        if (origin.isBlank()) return
+        require(path.startsWith("/"))
+        main.post { webView.loadUrl(origin + path) }
+    }
+
     fun hasSessionCookie(): Boolean {
         if (origin.isBlank()) return false
         val host = Uri.parse(origin).let { listOfNotNull(it.host, it.port.takeIf { p -> p > 0 }?.let { p -> "${it.host}:$p" }).lastOrNull() }

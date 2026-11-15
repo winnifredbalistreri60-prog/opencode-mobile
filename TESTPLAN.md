@@ -1,51 +1,85 @@
-# План проверки OpenCode Mobile 0.1.3-debug (автообновление)
+# План проверки OpenCode Mobile 0.2.0-debug (плагины MCP + регрессия автообновления)
 
-APK: `opencode-mobile-0.1.3.apk` (debug-подпись, сертификат `65b96eb0…2a90`). Ставится поверх 0.1.2 с `-r`.
-Тестовые APK лежат в `test-apks/`: `opencode-mobile-0.1.3-testserver.apk` (та же 0.1.3, но сервер обновлений
-`http://10.0.2.2:8765`), `opencode-mobile-0.1.4-test.apk` (versionCode 5, правильная подпись),
-`opencode-mobile-0.1.5-foreign-signed.apk` (versionCode 6, чужой ключ). Не публиковать.
+APK: `opencode-mobile-0.2.0.apk` (debug, сертификат `65b96eb0…2a90`), ставится поверх 0.1.3 (`-r`).
+Тестовые APK в `test-apks/`: `opencode-mobile-0.2.0-testserver.apk` (versionCode 10, сервер обновлений
+`http://10.0.2.2:8765`), `opencode-mobile-0.2.1-test.apk` (versionCode 11, тот же сервер). Из 0.1.3 нужен
+`0.1.3/test-apks/opencode-mobile-0.1.3-testserver.apk`. Ничего не публиковать.
+
+Результаты разработчика: эмулятор ocm-update35 (Pixel 6, API 35, x86_64), 15.11.2026 ~16:55–17:20 (UTC+7).
+Скриншоты в `screenshots/` (номера ниже). ✅ = проверено разработчиком, ⬜ = не проверено.
 
 ## Локальный сервер обновлений
 
 ```
-mkdir -p srv/releases/latest/download srv/releases/download/v0.1.4-test srv/releases/download/v0.1.5 \
-         srv/api/repos/winnifredbalistreri60-prog/opencode-mobile/releases
-scripts/make-release.sh --apk test-apks/opencode-mobile-0.1.4-test.apk \
-   --download-base http://10.0.2.2:8765/releases/download/v0.1.4-test --out /tmp/good
-cp /tmp/good/opencode-mobile-0.1.4-test.apk srv/releases/download/v0.1.4-test/
-cp /tmp/good/opencode-mobile-version.json srv/releases/latest/download/
+mkdir -p srv/releases/latest/download srv/releases/download/v0.2.0
+scripts/make-release.sh --apk test-apks/opencode-mobile-0.2.0-testserver.apk \
+   --download-base http://10.0.2.2:8765/releases/download/v0.2.0 --out /tmp/good20
+cp /tmp/good20/opencode-mobile-0.2.0.apk srv/releases/download/v0.2.0/
+cp /tmp/good20/opencode-mobile-version.json srv/releases/latest/download/
 cd srv && python3 -m http.server 8765
 ```
+(для шага 0.2.0 → 0.2.1-test то же с `opencode-mobile-0.2.1-test.apk` и `v0.2.1-test`)
 
-Из эмулятора хост виден как `10.0.2.2`.
+## A. Обновление 0.1.3 → 0.2.0 и экран обновлений (регрессия)
 
-## Сценарии
+1. ✅ На 0.1.3-testserver с установленной средой положить в `opencode.json` свой сервер (`deepwiki-user`,
+   remote `https://mcp.deepwiki.com/mcp`, `oauth:false`), `"plugins": []`, `$schema`. Запустить сервер (00).
+2. ✅ «Настройки приложения → Обновления приложения»: «Версия 0.1.3 (4). Источник: TEST …» (01). Тумблер
+   автопроверки включается, `update_auto_check=true` в prefs.
+3. ✅ `appops set ru.dredd20.opencode REQUEST_INSTALL_PACKAGES default`. «Проверить обновления» → «Обновление
+   OpenCode Mobile 0.2.0, 0.1.3 (4) → 0.2.0 (10)» (02) → «Скачать» → «Файл проверен…», кнопка «Открыть настройки»
+   (03) → системный экран (04) → «Allow from this source» → Назад → кнопка сама стала «Установить» (05) →
+   «Update» (06) → versionName 0.2.0, versionCode 10.
+4. ✅ После обновления: экран сессии (не Setup), Start → веб-UI (07). `opencode.json` побайтно тот же (md5 совпал),
+   и после старта 0.2.0 тоже (merge ничего не переписал). `update_auto_check` сохранился.
+5. ✅ 0.2.0: в настройках раздел «Плагины (MCP)» с кнопкой стоит над «Доступы телефона», раздел «Обновления
+   приложения» на месте: «Версия 0.2.0 (10)», тумблер выкл → `false`, вкл → `true` (28, 29); планшет (24–26),
+   «Проверить обновления» → «У вас последняя версия» (26).
+6. ✅ Регрессия самого апдейтера 0.2.0 → 0.2.1-test: «Проверить обновления» (30) → «Скачать» → «Открыть
+   настройки» (31) → Allow (32) → Назад → «Установить» (33) → Update (34) → versionCode 11. Среда, `opencode.json`
+   (phone, deepwiki-user, context7), `plugins`, `$schema` и `update_auto_check` сохранились; все MCP «подключён» (35).
 
-1. **0.1.2 → 0.1.3 (обычная сборка, GitHub).** `adb install -r opencode-mobile-0.1.3.apk` поверх 0.1.2 с
-   установленной средой. Среда на месте (экран сессии, не Setup). В «Настройки приложения → Обновления приложения»
-   видно «Версия 0.1.3 (4). Источник: github.com/winnifredbalistreri60-prog/opencode-mobile». Пока репозитория нет,
-   «Проверить обновления» даёт «HTTP 404: релиз или файл версии не найден…», автопроверка молчит.
-2. **Автопроверка при запуске.** Поставить `…-testserver.apk` (-r). Сбросить `update_last_check` (или подождать 6 ч),
-   открыть приложение: диалог «Обновление OpenCode Mobile 0.1.4-test» появляется сам.
-3. **Битый sha256.** В манифесте заменить `sha256` на 64 нуля → «Скачать» → «Обновление отклонено: sha256 не совпадает…».
-   В `cache/app-update` файла не остаётся.
-4. **Чужая подпись.** Манифест на `0.1.5-foreign` с верным sha256 → «Обновление отклонено: APK подписан другим ключом».
-5. **Запасной путь через API.** Удалить `releases/latest/download/opencode-mobile-version.json`, положить JSON релиза
-   (`assets[].name == "opencode-mobile-version.json"`, `browser_download_url`) в
-   `api/repos/winnifredbalistreri60-prog/opencode-mobile/releases/latest` → проверка находит 0.1.4-test.
-6. **Разрешение «из этого источника» (баг MURF).** Без разрешения: «Скачать» → «Файл проверен. Разрешите установку…»,
-   кнопка «Открыть настройки» → системный экран → включить «Allow from this source» → Назад. Кнопка диалога сама
-   стала «Установить».
-7. **Отмена и установка.** «Установить» → в окне Android «Cancel» → диалог снова «Установить» (без скачивания).
-   «Установить» → «Update» → `versionName=0.1.4-test`, `versionCode=5`. Приложение закрывается (это нормально для
-   самообновления), при запуске среда на месте, Start открывает веб-UI.
-8. **Нет новее.** На 0.1.4-test «Проверить обновления» → «У вас последняя версия».
-9. **Троттлинг и выключатель.** Повторный запуск в пределах 6 ч не делает запросов. Выключить автопроверку, сбросить
-   `update_last_check`, запустить: запросов к серверу нет.
+## B. Этап 0: merge opencode.json
 
-## Не проверено на эмуляторе (нужно на реальном устройстве или после публикации)
+7. ✅ (юнит) пустой/нет файла, битый JSON с бэкапом, не-объект, пользовательские MCP/plugins/provider, наш ключ
+   обновился (phone с `type: remote` → local, `disabled`/`timeout` пользователя сохранены), повторный merge без изменений.
+8. ✅ (эмулятор) записать в `opencode.json` текст `{ broken` → Стоп/Запустить → рядом
+   `opencode.json.broken-<ms>.bak` с исходным текстом, в `install.log` строка без содержимого, `opencode.json` =
+   шаблон с phone. (Потом вернуть рабочий конфиг.)
+9. ⬜ Полная переустановка среды (Setup) поверх пользовательского `opencode.json` — merge тот же, но прогон Setup
+   целиком не делал.
 
-- Настоящий GitHub: редирект `releases/latest/download` → `release-assets.githubusercontent.com`, лимит API 60 запросов/ч.
-- Обновление с запущенным встроенным сервером (остановка перед установкой).
-- Обрыв сети посреди скачивания APK (ожидается «Обновление отклонено…» и «Повторить»).
-- Android 8–12 (эмулятор: API 35) и arm64.
+## C. Этап 1: экран «Плагины»
+
+10. ✅ Значок пазла в верхней панели (07, 23) → «Плагины»: «Установленные (2)»: «Телефон (phone)» встроенный, без
+    «Удалить», подключён; `deepwiki-user` подключён (08).
+11. ✅ «Каталог»: список из Registry, метки HTTP (09). Поиск `context7` (10). Карточка Context7 (11): реестр
+    `io.github.upstash/context7`, `https://mcp.context7.com/mcp`, поле имени, поле Authorization (маска).
+12. ✅ «Установить» без ключа (12) → вкладка «Установленные», «Context7 (context7) ● подключён» (13). В
+    `opencode.json` добавлен `context7` (остальное на месте). `GET /api/mcp`: context7 connected, phone connected.
+13. ✅ OAuth-сервер: `io.github.getsentry/sentry-mcp` → «● нужен вход», «Unauthorized», кнопки «Войти»/«Удалить» (14).
+    «Войти» → веб-UI «Расширения → МКП» с кнопкой «Sign in to sentry» (15). Сам вход не проходил (этап 2).
+14. ✅ «Удалить» → подтверждение (16) → sentry пропал из списка, из `opencode.json` и из `GET /api/mcp` (17).
+15. ✅ Стоп/Запустить сервера → context7 и deepwiki-user снова подключены, sentry не вернулся (18, 19).
+16. ✅ Сервер остановлен → «Сервер OpenCode не отвечает. Показан конфиг…», статусы «ожидание» (27).
+17. ✅ Офлайн (`svc wifi/data disable`, перезапуск приложения) → «Офлайн: показан сохранённый каталог (время)» (36),
+    локальный поиск по кэшу (37). Сеть обратно.
+18. ✅ Значок «установлен» в каталоге (38). Повторная установка Context7: имя по умолчанию `context7-2`,
+    ключ в поле маскирован (39). При остановленном сервере запись сохраняется (40), после старта
+    «Context7 (context7-2) ● подключён», «Заголовки: Authorization (••••)» (41). Значение ключа найдено только в
+    `opencode.json` (0600), в логах `host/logs` нет; в `svc.log` только имя заголовка.
+19. ✅ Удаление подключённых `context7-2` и `context7` (42): из `opencode.json` и из `GET /api/mcp`; phone и
+    deepwiki-user остались connected.
+20. ✅ Планшет (`wm size 2560x1600`, `wm density 320`): список + пустая правая панель (20), каталог + карточка Sentry
+    справа (21), недоступный npx-сервер с причиной (22), панель сессии с двумя значками (23), настройки (24, 25).
+21. ✅ phone-mcp оставался «подключён» на всех шагах.
+
+## Не проверено (для тестера / реального устройства)
+
+- Реальный arm64-телефон, Android 8–12.
+- Вход OAuth до конца (этап 2), refresh токенов.
+- Сервер с обязательным заголовком и реальным ключом (проверял только Context7 с фиктивным необязательным ключом).
+- Режимы Termux и «Удалённый сервер» на экране «Плагины».
+- Несколько проектов (локаций) в веб-UI одновременно: PUT рассылается во все загруженные локации, но проверено с одной (`/root`).
+- Поведение при очень медленной сети и обрыве во время «Загрузить ещё».
+- Настоящий GitHub Releases для автообновления (репозиторий ещё не создан).

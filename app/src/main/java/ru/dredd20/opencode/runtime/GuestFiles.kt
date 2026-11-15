@@ -52,21 +52,10 @@ object GuestFiles {
         File(EmbeddedRuntime.rootfsDir(c), "root/.local/state/opencode").mkdirs()
         File(EmbeddedRuntime.rootfsDir(c), "root/.cache/opencode").mkdirs()
         File(EmbeddedRuntime.rootfsDir(c), "tmp").mkdirs()
-        File(cfgDir, "opencode.json").writeText(openCodeConfigJson())
+        // Merge, never overwrite: user MCP servers, plugins and settings stay (0.2.0).
+        val backup = OpenCodeConfig.mergeFile(File(cfgDir, OpenCodeConfig.FILE_NAME))
+        if (backup != null) EmbeddedRuntime.appendLog(c, "install.log", "opencode.json was not valid JSON; kept as ${backup.name}")
     }
 
-    fun openCodeConfigJson(): String =
-        """
-        {
-          "update": "disable",
-          "mcp": {
-            "servers": {
-              "phone": {
-                "type": "local",
-                "command": ["phone-mcp"]
-              }
-            }
-          }
-        }
-        """.trimIndent() + "\n"
+    fun openCodeConfigJson(): String = OpenCodeConfig.render(OpenCodeConfig.template())
 }

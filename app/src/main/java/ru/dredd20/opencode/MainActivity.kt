@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Extension
+import ru.dredd20.opencode.ui.PluginsScreen
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -88,12 +90,26 @@ import ru.dredd20.opencode.ui.ViewportPolicy
 import java.io.File
 
 class MainActivity : ComponentActivity() {
-    enum class Dest { Setup, Session, Settings, About, Unsupported }
+    enum class Dest { Setup, Session, Settings, About, Plugins, Unsupported }
 
     /** Retained across configuration changes (Activity is not recreated). */
     private var webHost: OpenCodeWebView? = null
     @Volatile private var currentDest: Dest = Dest.Session
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    @Volatile private var liveConn: ru.dredd20.opencode.plugins.ServerConn? = null
+    private val plugins by lazy {
+        ru.dredd20.opencode.plugins.PluginsController(
+            cacheDir = File(filesDir, "plugins"),
+            scope = lifecycleScope,
+            configFile = {
+                if (AppPrefs.mode(this) == RuntimeMode.EMBEDDED && EmbeddedRuntime.rootfsReady(this))
+                    ru.dredd20.opencode.runtime.OpenCodeConfig.configFile(EmbeddedRuntime.rootfsDir(this))
+                else null
+            },
+            conn = { liveConn },
+            log = { EmbeddedRuntime.appendLog(this, "svc.log", it) },
+        )
+    }
 
     private val fileChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val uris = result.data?.let { intent ->
@@ -130,7 +146,7 @@ class MainActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 // Settings/About: never steal Back for the hidden WebView (BUG-19).
-                if (currentDest == Dest.Settings || currentDest == Dest.About) {
+                if (currentDest == Dest.Settings || currentDest == Dest.About || currentDest == Dest.Plugins) {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
                     isEnabled = true
@@ -227,7 +243,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            BackHandler(enabled = dest == Dest.Settings || dest == Dest.About) {
+            BackHandler(enabled = dest == Dest.Settings || dest == Dest.About || dest == Dest.Plugins) {
                 dest = if (EmbeddedRuntime.installed(this@MainActivity) || AppPrefs.mode(this@MainActivity) != RuntimeMode.EMBEDDED) Dest.Session else Dest.Setup
             }
             // `tick` is read so prefs/files/progress recompose after install, start, or a mode change.
@@ -268,6 +284,11 @@ class MainActivity : ComponentActivity() {
                 liveServe = if (ok) rawServe else null
             }
             val serve = liveServe
+            liveConn = when {
+                mode == RuntimeMode.REMOTE && serve != null -> ru.dredd20.opencode.plugins.ServerConn(AppPrefs.remoteUrl(this).trimEnd('/'), AppPrefs.remoteUser(this), AppPrefs.remotePassword(this))
+                serve != null -> ru.dredd20.opencode.plugins.ServerConn(serve.origin, ServeCredentials.USERNAME, serve.password)
+                else -> null
+            }
             if (dest == Dest.Setup && installed && mode == RuntimeMode.EMBEDDED && runtimeState.phase != RuntimeService.Phase.INSTALLING) {
                 dest = Dest.Session
             }
@@ -285,6 +306,9 @@ class MainActivity : ComponentActivity() {
                         },
                         actions = {
                             if (dest == Dest.Session) {
+                                IconButton(onClick = { dest = Dest.Plugins }) {
+                                    Icon(Icons.Default.Extension, contentDescription = tr("Плагины", "Plugins"))
+                                }
                                 IconButton(onClick = { dest = Dest.Settings }) {
                                     Icon(Icons.Default.Settings, contentDescription = tr("Настройки приложения", "App settings"))
                                 }
@@ -310,7 +334,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
-                        Dest.Session, Dest.Settings, Dest.About -> {
+                        Dest.Session, Dest.Settings, Dest.About, Dest.Plugins -> {
                             // Keep the WebView composed when visiting Settings/About so it is not recreated (BUG-20).
                             SessionPane(
                                 serve, widthDp,
@@ -345,12 +369,25 @@ class MainActivity : ComponentActivity() {
                                     }, onUpdate = {
                                         if (RuntimeService.running) askStopForUpdate = true
                                         else RuntimeService.send(this@MainActivity, RuntimeService.ACTION_UPDATE)
-                                    }, onAbout = { dest = Dest.About }, onRequestMode = { next ->
+                                    }, onAbout = { dest = Dest.About }, onPlugins = { dest = Dest.Plugins }, onRequestMode = { next ->
                                         if (next != mode) {
                                             if (modeHasRunningServer(mode, serve)) pendingMode = next
                                             else switchMode(next)
                                         }
                                     }, modifier = Modifier.fillMaxSize())
+                                }
+                            }
+                            if (dest == Dest.Plugins) {
+                                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                                    PluginsScreen(
+                                        plugins,
+                                        twoPane = expanded,
+                                        onSignIn = {
+                                            dest = Dest.Session
+                                            webHost?.openPath("/settings?tab=extensions&subtab=mcps")
+                                        },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
                                 }
                             }
                             if (dest == Dest.About) {
@@ -492,6 +529,7 @@ class MainActivity : ComponentActivity() {
         onUpdate: () -> Unit,
         onAbout: () -> Unit,
         onRequestMode: (RuntimeMode) -> Unit,
+        onPlugins: () -> Unit,
         modifier: Modifier,
     ) {
         var url by remember { mutableStateOf(AppPrefs.remoteUrl(this)) }
@@ -552,6 +590,7 @@ class MainActivity : ComponentActivity() {
             onUpdateAutoCheck = { autoUpdate = it; AppPrefs.setUpdateAutoCheck(this, it) },
             onCheckUpdates = { ru.dredd20.opencode.update.AppUpdater.checkNow(this) },
             updateSource = BuildConfig.UPDATE_SOURCE_LABEL,
+            onPlugins = onPlugins,
             modifier = modifier,
         )
     }
@@ -567,6 +606,7 @@ class MainActivity : ComponentActivity() {
         Dest.Session -> "OpenCode Mobile"
         Dest.Settings -> tr("Настройки приложения", "App settings")
         Dest.About -> tr("О приложении", "About")
+        Dest.Plugins -> tr("Плагины", "Plugins")
         Dest.Unsupported -> tr("Не поддерживается", "Unsupported")
     }
 

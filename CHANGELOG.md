@@ -2,6 +2,21 @@
 
 All notable releases of this unofficial OpenCode Mobile client. The official OpenCode CLI remains a separate project ([anomalyco/opencode](https://github.com/anomalyco/opencode)).
 
+## 0.2.0 — 2026-11-15
+
+Debug build, versionCode 10. Same debug certificate as 0.1.0–0.1.3 (`65b96eb0…2a90`). Installs over 0.1.3 and keeps the environment and your config.
+
+- **Config is merged, not overwritten.** Setup and every server start only merge the app's keys (`update: "disable"`, `mcp.servers.phone`) into the guest `opencode.json`. User MCP servers, `plugins`, providers and other settings stay. User fields on `phone` (for example `disabled`, `timeout`) stay too. A file that is not valid JSON is kept as `opencode.json.broken-<ms>.bak` and replaced by the template. The file is written atomically with mode 0600.
+- **New “Plugins” screen** (Compose; puzzle icon in the top bar and App settings → Plugins). Two tabs on phones, list + details side by side on tablets.
+  - Catalog from the Official MCP Registry (`/v0.1/servers?version=latest`): pagination (“Load more”), server-side search (3+ chars, shorter queries filter locally), a local cache of everything seen, and an offline mode that shows and searches the cache.
+  - One-tap install for remote Streamable HTTP servers: entry written to `opencode.json`, then `PUT /api/experimental/mcp/:name` in the default and every loaded location so it connects right away. Name field (validated, unique, never `phone`) and fields for documented headers; secret headers are masked. Header values live only in `opencode.json` in app-private storage and are not logged.
+  - Installed list with live status from `GET /api/mcp` (connected / sign-in needed / failed / disabled / connecting). The empty list right after a server start is shown as “waiting” and polled, not as an error. Remove = delete from `opencode.json` + `DELETE /api/experimental/mcp/:name`.
+  - “Sign in” for `needs_auth` servers opens the web UI at Settings → Extensions → MCP, where OpenCode runs its OAuth flow.
+  - npx/Node, uvx/PyPI, Docker and SSE-only servers are listed as “not available yet” with the reason.
+  - `phone` is shown as built-in and cannot be removed.
+  - Termux / Remote modes: install connects until the server restarts (the config file is not the app's), with a notice.
+- 21 new unit tests (config merge: empty, broken JSON with backup, user servers/plugins kept, our key refreshed; registry parsing, remote filter, cache round-trip, status merge and warm-up). 89 tests in total.
+
 ## 0.1.3 — 2026-11-15
 
 Debug build, versionCode 4. Same debug certificate as 0.1.0–0.1.2 (`65b96eb0…2a90`).

@@ -4,11 +4,11 @@ Unofficial Android client for [OpenCode](https://opencode.ai). **This is not a p
 
 The app runs the official Linux `opencode serve` binary (linux-arm64 or linux-x64) inside an Ubuntu 24.04 PRoot environment and shows the **official web UI** in a WebView. A built-in Phone API (Termux:API-compatible command names plus an MCP server named `phone`) lets the agent use device sensors and features.
 
-Package: `ru.dredd20.opencode`. Current release: **0.1.3** (versionCode 4). Builds in this tree are **debug**.
+Package: `ru.dredd20.opencode`. Current release: **0.2.0** (versionCode 10). Builds in this tree are **debug**.
 
 [Русский README](README.md) · [Changelog](CHANGELOG.md) · [Third-party notices](NOTICE)
 
-## What 0.1.x includes
+## What 0.2.x includes
 
 - Embedded mode: Ubuntu 24.04 + official OpenCode 2.3.0 under PRoot, web UI sign-in without typing the serve password (native `/api/pair` + `/auth/connect/{code}`).
 - Termux and Remote modes (connect to an already running `opencode serve`).
@@ -16,14 +16,16 @@ Package: `ru.dredd20.opencode`. Current release: **0.1.3** (versionCode 4). Buil
 - “Agent reply is ready” notification when the app is in the background and a turn finishes (`session.idle` / `session.execution.succeeded`).
 - Phone and tablet layouts (two-column settings at width ≥ 840 dp).
 - In-app updates from this repository's GitHub Releases (since 0.1.3): sha256 and signature checks, system installer.
+- **Plugins (since 0.2.0).** A “Plugins” screen (puzzle icon in the top bar, or App settings → Plugins): a catalog of remote MCP servers from the Official MCP Registry with search, cache and offline mode, one-tap install (written to `opencode.json` and connected right away), removal, an installed list with live status, and fields for headers/API keys. For OAuth, “Sign in” opens Settings → Extensions → MCP in the web UI. The built-in `phone` server cannot be removed.
+- `opencode.json` is no longer overwritten on setup or start: the app only merges its own keys (`update`, `mcp.servers.phone`) and keeps your MCP servers, plugins and settings. A broken file is kept as `opencode.json.broken-<time>.bak`.
 
-Intentionally **not** in v0.1: an in-app agent browser, raw USB fd passing (`termux-usb -e` / SCM_RIGHTS), release signing, or store publication.
+Not yet included: local MCP via npx/uvx (no Node.js or uv in the environment; such servers are marked “not available yet” in the catalog), SSE-only servers (OpenCode 2.3 connects remote MCP over Streamable HTTP), OAuth sign-in through Custom Tabs (stage 2), an in-app agent browser, raw USB fd passing (`termux-usb -e` / SCM_RIGHTS), release signing, or store publication.
 
 ## Install
 
 Distributed as a debug APK, not via Google Play. You can install over a previous 0.1.x build that uses the same signing certificate.
 
-1. Download `opencode-mobile-0.1.3.apk` from [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (once a release is published) or build it yourself.
+1. Download `opencode-mobile-0.2.0.apk` from [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (once a release is published) or build it yourself.
 2. Allow installation from the chosen source and install the package.
 3. On the Setup screen, accept the unofficial-client disclaimer and tap **Install**. This needs a network connection and about 150 MB down / ~800 MB on disk (ubuntu-base + the OpenCode CLI).
 4. When you see “Ready: OpenCode 2.3.0”, tap **Start**. The official web UI opens.
@@ -96,6 +98,17 @@ The script refuses test builds made with `-PocmUpdateTestServer=http://…` (loc
 | Update found | Permission needed | After granting it |
 | --- | --- | --- |
 | ![update](docs/screenshots/update-available.png) | ![permission](docs/screenshots/update-permission.png) | ![install](docs/screenshots/update-install.png) |
+
+### Plugins (MCP)
+
+- The catalog comes from the [Official MCP Registry](https://registry.modelcontextprotocol.io) (`/v0.1/servers`, latest versions only). These are third-party servers and the registry does not vet them: agent requests go to the server's owner.
+- By default only servers that can run on the phone (remote Streamable HTTP) are shown. “Only available on the phone” off shows the rest with a reason.
+- In embedded mode an install is saved to `/root/.config/opencode/opencode.json` in the app's private folder (mode 0600) and survives server restarts and APK updates. Header values (API keys) are stored only there and never logged.
+- In Termux and Remote modes the server config is not the app's: an install lasts until the server restarts.
+
+| Installed | Server card | Tablet |
+| --- | --- | --- |
+| ![installed](docs/screenshots/plugins-installed.png) | ![card](docs/screenshots/plugins-card.png) | ![tablet](docs/screenshots/plugins-tablet.png) |
 
 ## Docs
 

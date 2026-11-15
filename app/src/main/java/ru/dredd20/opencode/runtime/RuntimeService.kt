@@ -105,6 +105,9 @@ class RuntimeService : Service() {
             return
         }
         GuestFiles.installPhoneCli(this)
+        // Merge-only: adds our keys if missing, keeps user MCP servers and plugins.
+        runCatching { GuestFiles.writeOpenCodeConfig(this) }
+            .onFailure { EmbeddedRuntime.appendLog(this, "svc.log", "config merge failed: ${it.javaClass.simpleName}") }
         acquireWake()
         set(Phase.STARTING, tr("Запуск OpenCode…", "Starting OpenCode…"))
         scope.launch {
