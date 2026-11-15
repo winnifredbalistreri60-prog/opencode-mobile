@@ -18,8 +18,40 @@ object AppPrefs {
     fun setRemoteUrl(c: Context, v: String) = p(c).edit().putString("remote_url", v).apply()
     fun remoteUser(c: Context) = p(c).getString("remote_user", "opencode") ?: "opencode"
     fun setRemoteUser(c: Context, v: String) = p(c).edit().putString("remote_user", v).apply()
-    fun remotePassword(c: Context) = p(c).getString("remote_password", "") ?: ""
-    fun setRemotePassword(c: Context, v: String) = p(c).edit().putString("remote_password", v).apply()
+    /**
+     * Remote password, encrypted with an Android Keystore key ("remote_password_enc").
+     * A plaintext "remote_password" from 0.2.0 and older is migrated on first read and removed.
+     * If the Keystore is unusable (rare, broken devices) the value is kept as before, in plaintext.
+     */
+    fun remotePassword(c: Context): String {
+        val prefs = p(c)
+        prefs.getString(KEY_REMOTE_PW_ENC, null)?.let { enc ->
+            return runCatching { SecretPrefs.decrypt(enc) }.getOrDefault("")
+        }
+        val legacy = prefs.getString(KEY_REMOTE_PW_PLAIN, "") ?: ""
+        if (legacy.isNotEmpty()) setRemotePassword(c, legacy)
+        return legacy
+    }
+
+    fun setRemotePassword(c: Context, v: String) {
+        val e = p(c).edit()
+        if (v.isEmpty()) {
+            e.remove(KEY_REMOTE_PW_ENC).remove(KEY_REMOTE_PW_PLAIN)
+        } else {
+            val enc = runCatching { SecretPrefs.encrypt(v) }.getOrNull()
+            if (enc != null) e.putString(KEY_REMOTE_PW_ENC, enc).remove(KEY_REMOTE_PW_PLAIN)
+            else e.putString(KEY_REMOTE_PW_PLAIN, v).remove(KEY_REMOTE_PW_ENC)
+        }
+        e.apply()
+    }
+
+    /** Encrypts a legacy plaintext Remote password, if any. Safe to call repeatedly. */
+    fun migrateSecrets(c: Context) {
+        if (p(c).contains(KEY_REMOTE_PW_PLAIN) && !p(c).contains(KEY_REMOTE_PW_ENC)) remotePassword(c)
+    }
+
+    private const val KEY_REMOTE_PW_PLAIN = "remote_password"
+    private const val KEY_REMOTE_PW_ENC = "remote_password_enc"
 
     fun setupDone(c: Context) = p(c).getBoolean("setup_done", false)
     fun setSetupDone(c: Context, v: Boolean) = p(c).edit().putBoolean("setup_done", v).apply()

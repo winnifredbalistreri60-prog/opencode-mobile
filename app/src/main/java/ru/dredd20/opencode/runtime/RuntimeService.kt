@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import ru.dredd20.opencode.MainActivity
 import ru.dredd20.opencode.R
 import ru.dredd20.opencode.i18n.tr
@@ -50,16 +52,27 @@ class RuntimeService : Service() {
     @Volatile private var stopRequested = false
     private var installOp = OP_INSTALL
     private val agentWatcher = AgentEventWatcher(this)
+    /** Start, stop and install never interleave (BUG from run3: first Start after Stopped sometimes lost). */
+    private val opLock = Mutex()
+    /** Latest startId: stopSelfResult() with it never stops a service that just got a newer Start. */
+    @Volatile private var lastStartId = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         goForeground(tr("OpenCode Mobile", "OpenCode Mobile"), state.value.message.ifBlank { tr("Подготовка…", "Preparing…") })
+        lastStartId = startId
         when (intent?.action) {
             ACTION_INSTALL -> startInstall(update = false)
             ACTION_UPDATE -> startInstall(update = true)
             ACTION_START -> startServer()
-            ACTION_STOP -> scope.launch { stopAll(); stopSelfIfIdle() }
+            ACTION_STOP -> {
+                // Flag now (main thread) so a Start/Install that is still waiting for /api/info gives up;
+                // capture the install job now so a later Update intent is not cancelled by this Stop.
+                stopRequested = true
+                val job = installJob
+                scope.launch { stopAll(job); stopSelfIfIdle() }
+            }
             else -> if (process?.isAlive != true && installJob?.isActive != true) stopSelfIfIdle()
         }
         return START_NOT_STICKY
@@ -67,24 +80,10 @@ class RuntimeService : Service() {
 
     private fun startInstall(update: Boolean) {
         if (installJob?.isActive == true) return
-        if (process?.isAlive == true) {
-            set(Phase.RUNNING, tr("Сначала остановите сервер", "Stop the server first"))
-            return
-        }
-        stopRequested = false
         acquireWake()
-        installOp = if (update) OP_UPDATE else OP_INSTALL
         installJob = scope.launch {
-            set(Phase.INSTALLING, if (update) tr("Обновление OpenCode…", "Updating OpenCode…") else tr("Установка среды…", "Installing the environment…"))
             try {
-                SetupPipeline(this@RuntimeService, updateCliOnly = update && EmbeddedRuntime.installed(this@RuntimeService))
-                    .run { !isActive || stopRequested }
-                if (stopRequested) set(Phase.IDLE, tr("Прервано", "Cancelled"))
-                else set(Phase.IDLE, if (update) tr("Обновление завершено", "Update finished") else tr("Установка завершена", "Installation finished"))
-            } catch (e: java.util.concurrent.CancellationException) {
-                set(Phase.IDLE, tr("Прервано", "Cancelled"))
-            } catch (e: Exception) {
-                set(Phase.ERROR, e.message ?: e.toString())
+                opLock.withLock { installLocked(update) }
             } finally {
                 releaseWake()
                 installJob = null
@@ -93,24 +92,62 @@ class RuntimeService : Service() {
         }
     }
 
-    private fun startServer() {
+    private suspend fun kotlinx.coroutines.CoroutineScope.installLocked(update: Boolean) {
         if (process?.isAlive == true) {
-            set(Phase.RUNNING, tr("Сервер уже работает", "Server already running"))
+            set(Phase.RUNNING, tr("Сначала остановите сервер", "Stop the server first"))
             return
         }
+        stopRequested = false
+        installOp = if (update) OP_UPDATE else OP_INSTALL
+        set(Phase.INSTALLING, if (update) tr("Обновление OpenCode…", "Updating OpenCode…") else tr("Установка среды…", "Installing the environment…"))
+        try {
+            SetupPipeline(this@RuntimeService, updateCliOnly = update && EmbeddedRuntime.installed(this@RuntimeService))
+                .run { !isActive || stopRequested }
+            if (stopRequested) set(Phase.IDLE, tr("Прервано", "Cancelled"))
+            else set(Phase.IDLE, if (update) tr("Обновление завершено", "Update finished") else tr("Установка завершена", "Installation finished"))
+        } catch (e: java.util.concurrent.CancellationException) {
+            set(Phase.IDLE, tr("Прервано", "Cancelled"))
+        } catch (e: Exception) {
+            set(Phase.ERROR, e.message ?: e.toString())
+        }
+    }
+
+    private fun startServer() {
         if (installJob?.isActive == true) return
+        acquireWake()
+        scope.launch {
+            // Waits for a Stop that is still running instead of racing it (run3 item 8).
+            val p = opLock.withLock { startLocked() }
+            if (p != null) {
+                val rc = p.waitFor()
+                if (process === p) {
+                    process = null
+                    if (state.value.phase != Phase.STOPPING) set(Phase.ERROR, tr("Сервер завершился (код $rc)", "Server exited (code $rc)"))
+                    releaseWake(); stopSelfIfIdle()
+                }
+            } else if (process == null && _state.value.phase != Phase.STOPPING && _state.value.phase != Phase.RUNNING) {
+                releaseWake(); stopSelfIfIdle()
+            }
+        }
+    }
+
+    /** Spawns serve and waits until it is healthy. Returns the live process, or null (state already set). */
+    private suspend fun startLocked(): Process? {
+        if (process?.isAlive == true) {
+            set(Phase.RUNNING, tr("Сервер уже работает", "Server already running"))
+            return null
+        }
+        stopRequested = false
         if (!EmbeddedRuntime.installed(this)) {
             set(Phase.ERROR, tr("Среда не установлена", "Environment is not installed"))
-            stopSelfIfIdle()
-            return
+            return null
         }
         GuestFiles.installPhoneCli(this)
         // Merge-only: adds our keys if missing, keeps user MCP servers and plugins.
         runCatching { GuestFiles.writeOpenCodeConfig(this) }
             .onFailure { EmbeddedRuntime.appendLog(this, "svc.log", "config merge failed: ${it.javaClass.simpleName}") }
-        acquireWake()
         set(Phase.STARTING, tr("Запуск OpenCode…", "Starting OpenCode…"))
-        scope.launch {
+        run {
             try {
                 PhoneApiService.ensure(this@RuntimeService)
                 val existing = ServeState.read(EmbeddedRuntime.stateFile(this@RuntimeService))
@@ -122,10 +159,11 @@ class RuntimeService : Service() {
                     agentWatcher.start(scope, existing.origin, existing.password)
                     ServeState.write(EmbeddedRuntime.lastServeFile(this@RuntimeService), existing)
                     // Keep the FGS up even though we didn't spawn; no process to wait on.
-                    return@launch
+                    return null
                 }
                 var lastError: String? = null
-                repeat(3) { attempt ->
+                for (attempt in 0 until 3) {
+                    if (stopRequested) break
                     val preferred = if (attempt == 0) existing?.port ?: last?.port else null
                     val port = PortAllocator.pickFreePort("127.0.0.1", preferred)
                     val reusedPassword = when {
@@ -152,26 +190,21 @@ class RuntimeService : Service() {
                         ServeState.write(EmbeddedRuntime.lastServeFile(this@RuntimeService), st)
                         set(Phase.RUNNING, tr("Сервер слушает 127.0.0.1:$port", "Server listening on 127.0.0.1:$port"))
                         agentWatcher.start(scope, st.origin, password)
-                        val rc = p.waitFor()
-                        if (process === p) {
-                            process = null
-                            if (state.value.phase != Phase.STOPPING) set(Phase.ERROR, tr("Сервер завершился (код $rc)", "Server exited (code $rc)"))
-                        }
-                        return@launch
+                        return p
                     }
                     lastError = tr("не дождались /api/info на порту $port", "timed out waiting for /api/info on port $port")
                     killTree(p, graceSec = 2)
                     process = null
                 }
-                set(Phase.ERROR, lastError ?: tr("не удалось запустить сервер", "failed to start the server"))
+                if (stopRequested) set(Phase.IDLE, tr("Остановлено", "Stopped"))
+                else set(Phase.ERROR, lastError ?: tr("не удалось запустить сервер", "failed to start the server"))
+            } catch (e: java.util.concurrent.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 set(Phase.ERROR, "proot: ${e.message}")
-            } finally {
-                if (process == null && _state.value.phase != Phase.STOPPING && _state.value.phase != Phase.RUNNING) {
-                    releaseWake(); stopSelfIfIdle()
-                }
             }
         }
+        return null
     }
 
     private suspend fun waitHealthy(port: Int, password: String): Boolean {
@@ -185,10 +218,14 @@ class RuntimeService : Service() {
         return false
     }
 
-    private suspend fun stopAll() {
+    private suspend fun stopAll(job: Job?) {
         set(Phase.STOPPING, tr("Остановка…", "Stopping…"))
         stopRequested = true
-        installJob?.cancel()
+        job?.cancel()
+        opLock.withLock { stopLocked() }
+    }
+
+    private fun stopLocked() {
         agentWatcher.stop()
         val p = process
         if (p != null) killTree(p, graceSec = 8)
@@ -217,9 +254,11 @@ class RuntimeService : Service() {
 
     private fun stopSelfIfIdle(ignoreInstallJob: Boolean = false) {
         if (process?.isAlive == true || (!ignoreInstallJob && installJob?.isActive == true)) return
-        if (_state.value.phase == Phase.RUNNING) return
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        val ph = _state.value.phase
+        if (ph == Phase.RUNNING || ph == Phase.STARTING || ph == Phase.INSTALLING) return
+        if (opLock.isLocked) return // a Start/Install is queued right behind us
+        // stopSelfResult(lastStartId) is a no-op if a newer Start arrived meanwhile (run3 item 8).
+        if (stopSelfResult(lastStartId)) ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     }
 
     @SuppressLint("WakelockTimeout")

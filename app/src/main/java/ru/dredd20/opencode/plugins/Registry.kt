@@ -5,7 +5,62 @@ import org.json.JSONObject
 import ru.dredd20.opencode.i18n.tr
 
 /** One header a remote server documents (`remotes[].headers[]`). */
-data class HeaderSpec(val name: String, val description: String, val required: Boolean, val secret: Boolean, val default: String?)
+data class HeaderSpec(
+    val name: String,
+    val description: String,
+    val required: Boolean,
+    val secret: Boolean,
+    val default: String?,
+    /** Registry `value`, e.g. "Bearer {smithery_api_key}": the user's input goes into the {…} placeholder. */
+    val value: String? = null,
+) {
+    /** Placeholder names in [value], in order, without braces. */
+    val variables: List<String> get() = value?.let { HeaderTemplate.variables(it) }.orEmpty()
+}
+
+/** run5 bug 1: registry header templates ("Bearer {key}") must be filled, not replaced by the raw key. */
+object HeaderTemplate {
+    private val VAR = Regex("\\{([A-Za-z0-9_.-]+)\\}")
+
+    fun variables(template: String): List<String> = VAR.findAll(template).map { it.groupValues[1] }.distinct().toList()
+
+    /**
+     * Header value to write. [input] is what the user typed. No template: input (or a fixed registry value when
+     * the input is empty). One variable: the input goes into the placeholder, unless the user already typed the
+     * whole value ("Bearer abc" for "Bearer {key}"). Several different variables are not fillable from one field:
+     * the input is used as is.
+     */
+    fun fill(spec: HeaderSpec, input: String): String {
+        val v = input.trim()
+        val t = spec.value?.trim()
+        if (t.isNullOrEmpty()) return v
+        val vars = variables(t)
+        if (vars.isEmpty()) return v.ifEmpty { t }
+        if (v.isEmpty()) return ""
+        if (vars.size > 1) return v
+        val m = VAR.find(t)!!
+        val prefix = t.substring(0, m.range.first)
+        val suffix = t.substring(m.range.last + 1)
+        val p = prefix.trim()
+        if (p.isNotEmpty() && v.startsWith(p, ignoreCase = true) && v.length > p.length && v[p.length].isWhitespace() &&
+            (suffix.isEmpty() || v.endsWith(suffix))) {
+            return v // the user already typed the whole value
+        }
+        return t.replace(m.value, v)
+    }
+
+    /**
+     * Changing the key of an installed server: keep the auth scheme of the old value ("Bearer ", "Token ", "Basic ")
+     * when the new input is a bare key.
+     */
+    fun rewrite(old: String?, input: String): String {
+        val v = input.trim()
+        val scheme = old?.trim()?.let { Regex("^(Bearer|Token|Basic|Bot)\\s+", RegexOption.IGNORE_CASE).find(it)?.value }
+        if (scheme == null || v.isEmpty()) return v
+        return if (v.startsWith(scheme.trim(), ignoreCase = true) && v.length > scheme.trim().length && v[scheme.trim().length].isWhitespace()) v
+        else scheme + v
+    }
+}
 
 data class RemoteSpec(val type: String, val url: String, val headers: List<HeaderSpec>)
 
@@ -24,7 +79,8 @@ data class RegistryServer(
     val packages: List<PackageSpec>,
     val status: String,
 ) {
-    val displayName: String get() = title?.takeIf { it.isNotBlank() } ?: name.substringAfterLast('/')
+    /** Title, else a readable part of the id ("com.notion/mcp" → "notion", not "mcp"). */
+    val displayName: String get() = title?.takeIf { it.isNotBlank() } ?: Registry.idLabel(name)
 }
 
 sealed class Availability {
@@ -76,6 +132,7 @@ object Registry {
                             required = h.optBoolean("isRequired", false),
                             secret = h.optBoolean("isSecret", false),
                             default = h.optString("default").takeIf { h.has("default") && it.isNotBlank() },
+                            value = h.optString("value").takeIf { h.has("value") && it.isNotBlank() },
                         )
                     }
                 }
@@ -165,10 +222,29 @@ object Registry {
         }
     }
 
-    /** Default config name for a server: last path segment, lowercased and sanitized, unique among [taken]. */
+    /** Last id segments that say nothing about the server ("com.notion/mcp" → "mcp"). */
+    private val GENERIC = setOf("mcp", "server", "mcp-server", "remote", "api", "http", "sse", "streamable-http", "default", "main")
+
+    /**
+     * Default config name (run5 bug 2): the title, else the last id segment, else, when that is generic ("mcp"),
+     * the segment before it ("com.notion" → "notion"). Lowercased, sanitised, never "phone", unique among [taken].
+     */
+    private fun clean(x: String) = x.lowercase().replace(Regex("[^a-z0-9_-]+"), "-").trim('-', '_').take(40)
+
+    /** Readable part of a registry id: the last segment, or the one before it when the last is generic. */
+    fun idLabel(id: String): String {
+        val segs = id.split('/').filter { it.isNotBlank() }
+        val last = segs.lastOrNull().orEmpty()
+        if (clean(last) !in GENERIC && clean(last).isNotEmpty()) return last
+        // Reverse-DNS namespace: "com.notion" → "notion", "io.github.user" → "user".
+        val p = segs.dropLast(1).lastOrNull().orEmpty().substringAfterLast('.')
+        return p.ifEmpty { last.ifEmpty { id } }
+    }
+
     fun suggestName(s: RegistryServer, taken: Set<String>): String {
-        val base = (s.title?.takeIf { it.isNotBlank() } ?: s.name.substringAfterLast('/'))
-            .lowercase().replace(Regex("[^a-z0-9_-]+"), "-").trim('-', '_').take(40).ifBlank { "mcp" }
+        val fromId = clean(idLabel(s.name))
+        val base = s.title?.takeIf { it.isNotBlank() }?.let { clean(it) }?.takeIf { it.isNotEmpty() && it !in GENERIC }
+            ?: fromId.ifBlank { "mcp" }
         val first = if (base == "phone") "phone-remote" else base
         if (first !in taken) return first
         var i = 2
@@ -204,7 +280,7 @@ object Registry {
                 put(JSONObject().put("type", r.type).put("url", r.url).put("headers", JSONArray().apply {
                     r.headers.forEach { h ->
                         put(JSONObject().put("name", h.name).put("description", h.description).put("isRequired", h.required)
-                            .put("isSecret", h.secret).apply { if (h.default != null) put("default", h.default) })
+                            .put("isSecret", h.secret).apply { if (h.default != null) put("default", h.default); if (h.value != null) put("value", h.value) })
                     }
                 }))
             }

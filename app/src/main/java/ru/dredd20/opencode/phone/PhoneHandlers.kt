@@ -158,25 +158,73 @@ class PhoneHandlers(
         else PhoneResponse.error(req.id, tr("нет сэмплов с сенсора", "no samples from sensor"))
     }
 
+    /**
+     * termux-location: try a fresh fix first (all enabled providers in parallel, up to `timeout` s,
+     * default 15), then fall back to the last known location. `-r last` skips the fresh fix,
+     * `-p gps|network|fused|passive` limits the provider (run3 item 5).
+     */
     @SuppressLint("MissingPermission")
     private fun location(req: PhoneRequest): PhoneResponse {
         need(Manifest.permission.ACCESS_FINE_LOCATION)
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        val loc: Location? = if (Build.VERSION.SDK_INT >= 30) {
-            lm.getLastKnownLocation(LocationManager.FUSED_PROVIDER)
-                ?: lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-        } else {
-            lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        val plan = LocationPlan.of(req.argString("request"), req.argString("provider"), req.argInt("timeout", LocationPlan.DEFAULT_TIMEOUT_S))
+        val enabled = runCatching { lm.getProviders(true) }.getOrDefault(emptyList())
+        val providers = LocationPlan.order(enabled, plan.provider)
+        var source = "current"
+        var loc: Location? = if (plan.fresh && providers.isNotEmpty()) currentLocation(lm, providers, plan.timeoutSec) else null
+        if (loc == null) {
+            source = "last_known"
+            val known = (providers + LocationPlan.order(runCatching { lm.allProviders }.getOrDefault(emptyList()), null)).distinct()
+            loc = known.mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }.maxByOrNull { it.time }
         }
-        if (loc == null) return PhoneResponse.error(req.id, tr("нет текущей точки (включите GPS и откройте приложение)", "no last location (enable GPS and open the app)"))
+        if (loc == null) {
+            val why = when {
+                providers.isEmpty() -> tr("геолокация выключена (нет включённых провайдеров)", "location is off (no enabled providers)")
+                plan.fresh -> tr("нет фикса за ${plan.timeoutSec} с и нет последней известной точки", "no fix within ${plan.timeoutSec} s and no last known location")
+                else -> tr("нет последней известной точки", "no last known location")
+            }
+            return PhoneResponse.error(req.id, why)
+        }
         return PhoneResponse.ok(req.id, mapOf(
             "latitude" to loc.latitude, "longitude" to loc.longitude,
             "altitude" to loc.altitude, "accuracy" to loc.accuracy,
             "bearing" to loc.bearing, "speed" to loc.speed,
             "provider" to loc.provider, "time" to loc.time,
+            "source" to source,
+            "age_ms" to (System.currentTimeMillis() - loc.time).coerceAtLeast(0),
         ))
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun currentLocation(lm: LocationManager, providers: List<String>, timeoutSec: Int): Location? {
+        val latch = CountDownLatch(1)
+        val found = java.util.concurrent.atomic.AtomicReference<Location?>(null)
+        val accept: (Location?) -> Unit = { l -> if (l != null && found.compareAndSet(null, l)) latch.countDown() }
+        val signals = mutableListOf<android.os.CancellationSignal>()
+        val listener = object : android.location.LocationListener {
+            override fun onLocationChanged(location: Location) = accept(location)
+            @Deprecated("Deprecated in Java")
+            override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+        val main = Handler(Looper.getMainLooper())
+        for (p in providers) {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val cs = android.os.CancellationSignal()
+                    signals += cs
+                    lm.getCurrentLocation(p, cs, ContextCompat.getMainExecutor(context)) { accept(it) }
+                } else {
+                    @Suppress("DEPRECATION")
+                    lm.requestSingleUpdate(p, listener, Looper.getMainLooper())
+                }
+            }
+        }
+        latch.await(timeoutSec.toLong(), TimeUnit.SECONDS)
+        signals.forEach { runCatching { it.cancel() } }
+        main.post { runCatching { lm.removeUpdates(listener) } }
+        return found.get()
     }
 
     private fun cameraPhoto(req: PhoneRequest): PhoneResponse {

@@ -30,6 +30,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -81,6 +83,9 @@ import ru.dredd20.opencode.serve.RemoteOrigin
 import ru.dredd20.opencode.serve.ServeCredentials
 import ru.dredd20.opencode.serve.ServeState
 import ru.dredd20.opencode.ui.AboutScreen
+import ru.dredd20.opencode.ui.TermuxActions
+import ru.dredd20.opencode.ui.TermuxSetupBlock
+import ru.dredd20.opencode.backend.TermuxInstall
 import ru.dredd20.opencode.ui.OpenCodeTheme
 import ru.dredd20.opencode.ui.OpenCodeWebView
 import ru.dredd20.opencode.ui.SettingsScreen
@@ -123,7 +128,12 @@ class MainActivity : ComponentActivity() {
         fileCallback = null
     }
 
-    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permTick++ }
+    /** Bumped after a permission answer and on resume so Termux readiness is re-read. */
+    private var permTick by mutableIntStateOf(0)
+    /** Termux mode: last start error (stderr from Termux) and whether a start is in progress. */
+    private var termuxError by mutableStateOf<String?>(null)
+    private var termuxBusy by mutableStateOf(false)
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val dest = PhonePending.pictureDest
         if (ok && dest != null) PhonePending.pictureRequest?.complete(dest)
@@ -173,6 +183,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         AppVisibility.resumed = true
+        permTick++
         ru.dredd20.opencode.update.AppUpdater.onResume(this)
     }
 
@@ -346,12 +357,10 @@ class MainActivity : ComponentActivity() {
                                         userMessage = null
                                         when (AppPrefs.mode(this@MainActivity)) {
                                             RuntimeMode.EMBEDDED -> RuntimeService.send(this@MainActivity, RuntimeService.ACTION_START)
-                                            RuntimeMode.TERMUX -> lifecycleScope.launch {
-                                                TermuxServe.ensureRunning(this@MainActivity).fold(
-                                                    onSuccess = { userMessage = null; dest = Dest.Session },
-                                                    onFailure = { userMessage = it.message ?: it.toString() },
-                                                )
-                                            }
+                                            RuntimeMode.TERMUX -> startTermux(
+                                                onOk = { userMessage = null; dest = Dest.Session },
+                                                onFail = { userMessage = it },
+                                            )
                                             RuntimeMode.REMOTE -> {
                                                 if (RemoteOrigin.parse(AppPrefs.remoteUrl(this@MainActivity)) == null) {
                                                     userMessage = tr("Укажите URL удалённого сервера", "Enter the remote server URL")
@@ -363,7 +372,7 @@ class MainActivity : ComponentActivity() {
                                     }, onStop = {
                                         when (AppPrefs.mode(this@MainActivity)) {
                                             RuntimeMode.EMBEDDED -> RuntimeService.send(this@MainActivity, RuntimeService.ACTION_STOP)
-                                            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity) }
+                                            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity); tick++ }
                                             RuntimeMode.REMOTE -> userMessage = tr("Удалённый сервер не управляется из приложения", "The remote server is not stopped from the app")
                                         }
                                     }, onUpdate = {
@@ -461,24 +470,22 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (mode == RuntimeMode.TERMUX && serve == null) {
-            Column(modifier.padding(24.dp)) {
+            @Suppress("UNUSED_VARIABLE") val permissionsVersion = permTick
+            Column(modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
                 Text(
                     Termux.notReadyReason(this@MainActivity)
                         ?: tr("Сервер Termux не запущен.", "The Termux server is not running."),
                     style = MaterialTheme.typography.bodyLarge,
                 )
-                Text(Termux.instructions(), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp))
                 androidx.compose.material3.Button(
-                    onClick = {
-                        lifecycleScope.launch {
-                            TermuxServe.ensureRunning(this@MainActivity).fold(
-                                onSuccess = {},
-                                onFailure = { /* message is surfaced in settings; here we just stop waiting */ },
-                            )
-                        }
-                    },
+                    onClick = { startTermux(onOk = {}, onFail = {}) },
+                    enabled = !termuxBusy,
                     modifier = Modifier.padding(top = 12.dp),
-                ) { Text(tr("Запустить", "Start")) }
+                ) { Text(if (termuxBusy) tr("Запуск в Termux…", "Starting in Termux…") else tr("Запустить", "Start")) }
+                TermuxSetupBlock(
+                    Termux.instructions(), termuxActions(), termuxError,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
             }
             return
         }
@@ -532,6 +539,7 @@ class MainActivity : ComponentActivity() {
         onPlugins: () -> Unit,
         modifier: Modifier,
     ) {
+        @Suppress("UNUSED_VARIABLE") val permissionsVersion = permTick // re-read Termux readiness
         var url by remember { mutableStateOf(AppPrefs.remoteUrl(this)) }
         var user by remember { mutableStateOf(AppPrefs.remoteUser(this)) }
         var pass by remember { mutableStateOf(AppPrefs.remotePassword(this)) }
@@ -541,7 +549,7 @@ class MainActivity : ComponentActivity() {
         ).associateWith { AppPrefs.categoryEnabled(this, it) }
         var catState by remember { mutableStateOf(cats) }
         var autoUpdate by remember { mutableStateOf(AppPrefs.updateAutoCheck(this)) }
-        val logs = listOf("runtime-state.log", "install.log", "svc.log", "phone.log", "update.log").joinToString("\n\n") {
+        val logs = listOf("runtime-state.log", "install.log", "svc.log", "termux.log", "phone.log", "update.log").joinToString("\n\n") {
             val body = EmbeddedRuntime.readLog(this, it, 6_000)
             if (body.isBlank()) "" else "--- $it ---\n$body"
         }
@@ -567,10 +575,7 @@ class MainActivity : ComponentActivity() {
             message = listOfNotNull(
                 userMessage,
                 when (mode) {
-                    RuntimeMode.EMBEDDED -> listOfNotNull(
-                        runtimeState.message.takeIf { it.isNotBlank() },
-                        serve?.let { tr("порт ${it.port}", "port ${it.port}") },
-                    ).distinct().joinToString(" · ").ifBlank { null }
+                    RuntimeMode.EMBEDDED -> ru.dredd20.opencode.ui.StatusText.embedded(runtimeState.message, serve?.port) { p -> tr("порт $p", "port $p") }
                     RuntimeMode.TERMUX -> serve?.let { tr("Termux 127.0.0.1:${it.port}", "Termux 127.0.0.1:${it.port}") }
                         ?: Termux.notReadyReason(this)
                     RuntimeMode.REMOTE -> serve?.let { tr("Удалённый ${it.origin}", "Remote ${it.origin}") }
@@ -591,8 +596,56 @@ class MainActivity : ComponentActivity() {
             onCheckUpdates = { ru.dredd20.opencode.update.AppUpdater.checkNow(this) },
             updateSource = BuildConfig.UPDATE_SOURCE_LABEL,
             onPlugins = onPlugins,
+            termuxActions = if (mode == RuntimeMode.TERMUX) termuxActions() else null,
+            termuxBusy = mode == RuntimeMode.TERMUX && termuxBusy,
             modifier = modifier,
         )
+    }
+
+    private fun termuxActions() = TermuxActions(
+        termuxInstalled = Termux.isInstalled(this),
+        hasPermission = Termux.hasPermission(this),
+        onCopyInstall = { copyTermuxInstallCommand() },
+        onRequestPermission = { permissionLauncher.launch(arrayOf(Termux.PERMISSION)) },
+        onOpenTermux = {
+            packageManager.getLaunchIntentForPackage(Termux.PACKAGE)?.let { runCatching { startActivity(it) } }
+        },
+    )
+
+    private fun copyTermuxInstallCommand() {
+        val text = runCatching { TermuxInstall.pasteCommand(TermuxInstall.script(this)) }
+            .getOrElse {
+                android.widget.Toast.makeText(this, it.message ?: it.toString(), android.widget.Toast.LENGTH_LONG).show()
+                return
+            }
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("OpenCode Mobile: Termux install", text))
+        android.widget.Toast.makeText(
+            this,
+            tr("Команда скопирована. Вставьте её в Termux и нажмите Enter.", "Command copied. Paste it into Termux and press Enter."),
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    /** One Termux start at a time; the error (stderr from Termux) is shown in the session pane and settings. */
+    private fun startTermux(onOk: () -> Unit, onFail: (String) -> Unit) {
+        if (termuxBusy) return
+        termuxBusy = true
+        termuxError = null
+        lifecycleScope.launch {
+            try {
+                TermuxServe.ensureRunning(this@MainActivity).fold(
+                    onSuccess = { termuxError = null; onOk() },
+                    onFailure = {
+                        val msg = it.message ?: it.toString()
+                        termuxError = msg
+                        onFail(msg)
+                    },
+                )
+            } finally {
+                termuxBusy = false
+            }
+        }
     }
 
     private fun initialDest(): Dest = when {

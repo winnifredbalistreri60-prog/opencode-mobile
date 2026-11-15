@@ -137,4 +137,62 @@ class RegistryTest {
         assertEquals(setOf("https://c/mcp"), Installed.urlsInstalled(cfg))
         assertEquals(listOf("/root", "/tmp"), McpApi.parseLocations("""[{"directory":"/root"},{"directory":"/tmp"}]"""))
     }
+
+    // ---- run5 ----
+
+    private val smithery = """{"server":{"name":"ai.smithery/smithery-notion","description":"n","version":"1",
+        "remotes":[{"type":"streamable-http","url":"https://server.smithery.ai/@smithery/notion/mcp",
+          "headers":[{"name":"Authorization","description":"Bearer token","isRequired":true,"isSecret":true,
+                      "value":"Bearer {smithery_api_key}"}]}]}}"""
+
+    @Test
+    fun headerTemplateIsFilled() {
+        val s = Registry.parseServer(JSONObject(smithery))!!
+        val h = s.remotes[0].headers[0]
+        assertEquals("Bearer {smithery_api_key}", h.value)
+        assertEquals(listOf("smithery_api_key"), h.variables)
+        assertEquals("Bearer abc123", HeaderTemplate.fill(h, "abc123"))
+        assertEquals("Bearer abc123", HeaderTemplate.fill(h, "  abc123 "))
+        // The user pasted the whole value: no "Bearer Bearer".
+        assertEquals("Bearer abc123", HeaderTemplate.fill(h, "Bearer abc123"))
+        assertEquals("", HeaderTemplate.fill(h, ""))
+        // Value survives the cache round-trip.
+        val back = Registry.fromCacheJson(Registry.toJson(s))!!
+        assertEquals("Bearer {smithery_api_key}", back.remotes[0].headers[0].value)
+    }
+
+    @Test
+    fun headerWithoutTemplateKeepsRawInput() {
+        val raw = HeaderSpec("Authorization", "", false, true, null, null)
+        assertEquals("k", HeaderTemplate.fill(raw, "k"))
+        val fixed = HeaderSpec("X-Mode", "", false, false, null, "readonly")
+        assertEquals("readonly", HeaderTemplate.fill(fixed, ""))
+        assertEquals("custom", HeaderTemplate.fill(fixed, "custom"))
+        val two = HeaderSpec("X", "", false, false, null, "{a}:{b}")
+        assertEquals("v", HeaderTemplate.fill(two, "v"))
+    }
+
+    @Test
+    fun rewriteKeepsAuthScheme() {
+        assertEquals("Bearer new", HeaderTemplate.rewrite("Bearer old", "new"))
+        assertEquals("Bearer new", HeaderTemplate.rewrite("Bearer old", "Bearer new"))
+        assertEquals("new", HeaderTemplate.rewrite("old", "new"))
+        assertEquals("Token new", HeaderTemplate.rewrite("Token old", "new"))
+    }
+
+    @Test
+    fun suggestNameSkipsGenericLastSegment() {
+        val notion = Registry.parseServer(JSONObject("""{"server":{"name":"com.notion/mcp","description":"","version":"1"}}"""))!!
+        assertEquals("notion", Registry.suggestName(notion, emptySet()))
+        assertEquals("notion", notion.displayName)
+        assertEquals("notion-2", Registry.suggestName(notion, setOf("notion")))
+        val gh = Registry.parseServer(JSONObject("""{"server":{"name":"io.github.acme/server","description":"","version":"1"}}"""))!!
+        assertEquals("acme", Registry.suggestName(gh, emptySet()))
+        val titled = notion.copy(title = "Notion Workspace")
+        assertEquals("notion-workspace", Registry.suggestName(titled, emptySet()))
+        val genericTitle = notion.copy(title = "MCP")
+        assertEquals("notion", Registry.suggestName(genericTitle, emptySet()))
+        val smith = Registry.parseServer(JSONObject(smithery))!!
+        assertEquals("smithery-notion", Registry.suggestName(smith, emptySet()))
+    }
 }

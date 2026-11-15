@@ -181,11 +181,15 @@ class PluginsController(
             onDone(tr("Заполните: ", "Fill in: ") + missing.joinToString { it.name })
             return
         }
+        // Fill registry templates ("Bearer {key}") with what the user typed.
+        val filled = LinkedHashMap<String, String>()
+        headers.forEach { (k, v) -> filled[k] = v.trim() }
+        remote.headers.forEach { h -> filled[h.name] = HeaderTemplate.fill(h, headers[h.name].orEmpty()) }
         busy = n
         scope.launch {
             val err = withContext(Dispatchers.IO) {
                 runCatching {
-                    val cfg = Registry.remoteConfig(remote.url, headers)
+                    val cfg = Registry.remoteConfig(remote.url, filled)
                     configFile()?.let { f ->
                         val old = if (f.isFile) f.readText() else null
                         OpenCodeConfig.writeAtomic(f, OpenCodeConfig.putServer(old, n, cfg))
@@ -202,6 +206,45 @@ class PluginsController(
             }
             busy = null
             message = err ?: tr("Установлен «$n»", "Installed “$n”")
+            onDone(err)
+            refreshInstalled(poll = true)
+        }
+    }
+
+    /**
+     * run5 bug 4: change the key(s) of an installed remote server without reinstalling. Only header names that
+     * are already in opencode.json are changed; an empty input keeps the old value. The auth scheme of the old
+     * value ("Bearer ") is kept when the user types a bare key. Values are never logged.
+     */
+    fun updateHeaders(name: String, inputs: Map<String, String>, onDone: (String?) -> Unit = {}) {
+        if (busy != null || name == OpenCodeConfig.PHONE_SERVER) return
+        val f = configFile()
+        if (f == null) {
+            onDone(tr("В этом режиме конфиг сервера приложению не принадлежит.", "In this mode the server config is not the app's."))
+            return
+        }
+        busy = name
+        scope.launch {
+            val err = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = if (f.isFile) f.readText() else null
+                    val root = OpenCodeConfig.parse(text) ?: error(tr("opencode.json не читается", "opencode.json is unreadable"))
+                    val srv = OpenCodeConfig.servers(root)?.optJSONObject(name) ?: error(tr("«$name» нет в opencode.json", "“$name” is not in opencode.json"))
+                    val h = srv.optJSONObject("headers") ?: JSONObject()
+                    var changed = 0
+                    inputs.forEach { (k, v) ->
+                        if (v.isNotBlank() && h.has(k)) { h.put(k, HeaderTemplate.rewrite(h.optString(k), v)); changed++ }
+                    }
+                    if (changed == 0) return@runCatching tr("Ключ не изменён: поле пустое.", "Key not changed: the field is empty.")
+                    srv.put("headers", h)
+                    OpenCodeConfig.writeAtomic(f, OpenCodeConfig.putServer(text, name, srv))
+                    val apiErr = conn()?.let { McpApi(it).add(name, srv) }
+                    log("plugins: headers changed for $name (${inputs.keys.joinToString()}) api=${apiErr ?: "ok"}")
+                    apiErr?.let { tr("Сохранено, но сервер ответил: $it", "Saved, but the server said: $it") }
+                }.getOrElse { e -> e.message ?: e.javaClass.simpleName }
+            }
+            busy = null
+            message = err ?: tr("Ключ «$name» обновлён", "Key for “$name” updated")
             onDone(err)
             refreshInstalled(poll = true)
         }

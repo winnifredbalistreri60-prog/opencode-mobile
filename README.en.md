@@ -4,7 +4,7 @@ Unofficial Android client for [OpenCode](https://opencode.ai). **This is not a p
 
 The app runs the official Linux `opencode serve` binary (linux-arm64 or linux-x64) inside an Ubuntu 24.04 PRoot environment and shows the **official web UI** in a WebView. A built-in Phone API (Termux:API-compatible command names plus an MCP server named `phone`) lets the agent use device sensors and features.
 
-Package: `ru.dredd20.opencode`. Current release: **0.2.0** (versionCode 10). Builds in this tree are **debug**.
+Package: `ru.dredd20.opencode`. Current release: **0.2.1** (versionCode 11). Builds in this tree are **debug**.
 
 [Русский README](README.md) · [Changelog](CHANGELOG.md) · [Third-party notices](NOTICE)
 
@@ -25,7 +25,7 @@ Not yet included: local MCP via npx/uvx (no Node.js or uv in the environment; su
 
 Distributed as a debug APK, not via Google Play. You can install over a previous 0.1.x build that uses the same signing certificate.
 
-1. Download `opencode-mobile-0.2.0.apk` from [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (once a release is published) or build it yourself.
+1. Download `opencode-mobile-0.2.1.apk` from [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (once a release is published) or build it yourself.
 2. Allow installation from the chosen source and install the package.
 3. On the Setup screen, accept the unofficial-client disclaimer and tap **Install**. This needs a network connection and about 150 MB down / ~800 MB on disk (ubuntu-base + the OpenCode CLI).
 4. When you see “Ready: OpenCode 2.3.0”, tap **Start**. The official web UI opens.
@@ -47,14 +47,28 @@ confirmation. Without the “Install unknown apps” permission, “Open setting
 “Allow from this source” and come back, the dialog switches to “Install” by itself. The local server is stopped before
 installing. Data (rootfs, settings) is kept.
 
-**Manually.** 0.1.3 installs over 0.1.2 / 0.1.1 / 0.1.0 when the certificate matches (SHA-256 `65b96eb07abe416771b1a8c96184d87641d2e1cf51954ec340d40d34b32d2a90` for these debug builds). The rootfs is kept. Phone API scripts are refreshed on every Start.
+**Manually.** A new version installs over 0.2.x / 0.1.x when the certificate matches (SHA-256 `65b96eb07abe416771b1a8c96184d87641d2e1cf51954ec340d40d34b32d2a90` for these debug builds). The rootfs is kept. Phone API scripts are refreshed on every Start.
 
 ### Termux mode
 
-1. Install Termux from F-Droid (or the official APK for your ABI). The Play Store Termux build is not suitable.
-2. Add `allow-external-apps=true` to `~/.termux/termux.properties` and run `termux-reload-settings`.
-3. Grant OpenCode Mobile the `RUN_COMMAND` permission.
-4. In app settings, select Termux mode and Start. If Termux is missing, the UI shows instructions instead of waiting forever.
+You need an **arm64** phone and Termux from F-Droid or GitHub (the Play Store build is not suitable). The official OpenCode Linux build is linked against glibc while Termux uses Bionic, so `npm i -g opencode-ai` does not work in Termux. The install script:
+
+- installs Termux's own glibc (`glibc-repo`, `glibc-runner`) and `patchelf`;
+- downloads the official `opencode-linux-<arch>.tar.gz` from GitHub and checks its sha256 (pinned in the script for 2.3.0);
+- patches only the ELF interpreter to `$PREFIX/glibc/lib/ld-linux-*.so` (no RPATH change: that breaks the bundled payload);
+- adds an `opencode` command to `$PREFIX/bin` (clears `LD_PRELOAD` and runs the binary directly);
+- sets `allow-external-apps=true` and runs `termux-reload-settings`.
+
+Steps:
+
+1. Install Termux and open it once.
+2. In OpenCode Mobile: App settings → Mode: Termux → **Copy install command**. In Termux long-press → Paste, then Enter. The script is saved as `~/ocm-termux-install.sh`; running it again is safe and updates the binary.
+   The same script is `scripts/termux-install.sh` in the repo. Once 0.2.1 is in `main` you can also run:
+   `curl -fsSL https://raw.githubusercontent.com/winnifredbalistreri60-prog/opencode-mobile/main/scripts/termux-install.sh | bash`
+3. Allow the app to “Run commands in Termux” (button on screen or Android Settings → Apps → OpenCode Mobile → Permissions).
+4. Tap Start. The server password goes through stdin and a 0600 file in `~/.opencode-mobile/`, never through arguments. Stop ends only our `opencode serve` (by pid and port). If start fails, the Termux error (stderr and exit code) is shown on screen and written to `termux.log`.
+
+Limitation: on x86_64 Android (emulators, some Chromebooks) seccomp kills the glibc loader (`Bad system call`, exit 159). Use the built-in mode there.
 
 Switching mode stops the previous mode’s server (after a confirmation).
 

@@ -87,8 +87,21 @@ object AppUpdater {
     fun onResume(c: Context) {
         _canInstall.value = canInstallPackages(c)
         val p = _phase.value
-        if (p is Phase.Ready && _canInstall.value) log(c, "resume: install permission granted, ready to install ${p.info.versionName}")
+        if (p is Phase.Ready) {
+            val app = c.applicationContext
+            scope.launch {
+                if (!readyFileValid(p)) {
+                    log(app, "resume: cached update file is gone or changed")
+                    _phase.compareAndSet(p, Phase.Failed(tr("Файл обновления пропал, скачайте ещё раз.", "The update file is gone, download it again."), p.info))
+                } else if (_canInstall.value) log(app, "resume: install permission granted, ready to install ${p.info.versionName}")
+            }
+        }
     }
+
+    private fun readyFileValid(p: Phase.Ready): Boolean = runCatching {
+        p.file.isFile && (p.info.size <= 0 || p.file.length() == p.info.size) &&
+            UpdateManifest.sameDigest(p.file.inputStream().use { UpdateManifest.sha256Hex(it) }, p.info.sha256)
+    }.getOrDefault(false)
 
     fun openDialog() { _dialog.value = true }
 
@@ -121,13 +134,26 @@ object AppUpdater {
 
     /** Manual check from settings: always runs and always shows the dialog with the result. */
     fun checkNow(c: Context) {
-        _dialog.value = true
+        // Ready: the dialog opens only after the cached file is re-verified (run4 item 1).
+        if (_phase.value !is Phase.Ready) _dialog.value = true
         check(c.applicationContext, auto = false)
     }
 
     private fun check(app: Context, auto: Boolean) {
         val busy = _phase.value
-        if (busy is Phase.Downloading || busy is Phase.Installing || busy is Phase.Ready) {
+        if (busy is Phase.Ready) {
+            // run4 item 1: only say "File verified" if the file is still there and its sha256 still matches.
+            scope.launch {
+                if (readyFileValid(busy)) {
+                    if (!auto) _dialog.value = true
+                } else {
+                    log(app, "cached update file is gone or changed, checking again")
+                    if (_phase.compareAndSet(busy, Phase.Idle)) check(app, auto)
+                }
+            }
+            return
+        }
+        if (busy is Phase.Downloading || busy is Phase.Installing) {
             if (!auto) _dialog.value = true
             return
         }
@@ -203,8 +229,13 @@ object AppUpdater {
         scope.launch {
             val r = runCatching { downloadVerified(app, info) }
             r.onFailure { t ->
-                log(app, "download/verify failed: ${t.message}")
-                _phase.value = Phase.Failed(tr("Обновление отклонено: ", "Update rejected: ") + (t.message ?: t.javaClass.simpleName), info)
+                log(app, "download/verify failed: ${t.javaClass.simpleName}: ${t.message}")
+                val why = t.message ?: t.javaClass.simpleName
+                _phase.value = Phase.Failed(
+                    if (UpdateDownload.isNetworkError(t)) tr("Загрузка не удалась: $why. «Повторить» продолжит с места обрыва.", "Download failed: $why. Retry resumes where it stopped.")
+                    else tr("Обновление отклонено: ", "Update rejected: ") + why,
+                    info,
+                )
             }.onSuccess { file ->
                 log(app, "verified ${file.name}: sha256, size, package, versionCode, signer OK")
                 _canInstall.value = canInstallPackages(app)
@@ -216,45 +247,89 @@ object AppUpdater {
 
     private fun updateDir(c: Context) = File(c.cacheDir, "app-update")
 
+    private fun verifyFail(msg: String): Nothing = throw UpdateDownload.VerifyException(msg)
+
+    /**
+     * Download into a .part file and resume it with `Range` after a network drop (run4 item 3).
+     * sha256 covers the whole file (the existing part is hashed first). Verification failures delete
+     * the part; network errors keep it for Retry.
+     */
     private fun downloadVerified(app: Context, info: UpdateManifest.Info): File {
         val dir = updateDir(app).apply { mkdirs() }
-        dir.listFiles()?.forEach { it.delete() }
-        val file = File(dir, "opencode-mobile-${info.versionCode}.apk")
+        val part = File(dir, UpdateDownload.partName(info.versionCode, info.sha256))
+        val file = File(dir, UpdateDownload.apkName(info.versionCode))
+        dir.listFiles()?.forEach { if (it.name != part.name) it.delete() }
+        if (!UpdateManifest.isAllowedUrl(info.url, BuildConfig.UPDATE_ALLOWED_PREFIX)) verifyFail(tr("адрес APK вне репозитория обновлений", "APK URL is outside the update repository"))
         try {
-            if (!UpdateManifest.isAllowedUrl(info.url, BuildConfig.UPDATE_ALLOWED_PREFIX)) error(tr("адрес APK вне репозитория обновлений", "APK URL is outside the update repository"))
-            get(info.url).use { r ->
-                if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
-                val body = r.body
-                val total = info.size.takeIf { it > 0 } ?: body.contentLength()
+            val start = UpdateDownload.rangeStart(part.length(), info.size)
+            if (start == null) part.delete()
+            val b = Request.Builder().url(info.url)
+                .header("User-Agent", "OpenCodeMobile/${BuildConfig.VERSION_NAME}")
+                .header("Cache-Control", "no-cache")
+                .cacheControl(CacheControl.FORCE_NETWORK)
+            if (start != null) b.header("Range", "bytes=$start-").header("Accept-Encoding", "identity")
+            http.newCall(b.build()).execute().use { r ->
+                var next = UpdateDownload.next(r.code, start, info.size, part.length())
+                if (next == UpdateDownload.Next.APPEND && UpdateDownload.contentRangeStart(r.header("Content-Range")) != start) next = UpdateDownload.Next.RESTART
+                if (next != UpdateDownload.Next.ALREADY_COMPLETE && !r.isSuccessful) {
+                    if (r.code == 416) part.delete()
+                    throw IOException("HTTP ${r.code}")
+                }
                 val md = MessageDigest.getInstance("SHA-256")
                 var done = 0L
-                var lastEmit = 0L
-                body.byteStream().use { input ->
-                    file.outputStream().use { out ->
-                        val buf = ByteArray(64 * 1024)
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            out.write(buf, 0, n)
-                            md.update(buf, 0, n)
-                            done += n
-                            if (done > UpdateManifest.MAX_APK_BYTES || (info.size > 0 && done > info.size)) error(tr("файл больше заявленного", "file is larger than declared"))
-                            if (total > 0 && done - lastEmit >= 128 * 1024) {
-                                lastEmit = done
-                                _phase.value = Phase.Downloading(info, (done.toFloat() / total).coerceIn(0f, 1f))
+                when (next) {
+                    UpdateDownload.Next.RESTART -> part.delete()
+                    else -> {
+                        part.inputStream().use { input ->
+                            val buf = ByteArray(64 * 1024)
+                            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n); done += n }
+                        }
+                        log(app, if (next == UpdateDownload.Next.APPEND) "resuming download at $done bytes" else "part file already complete ($done bytes)")
+                    }
+                }
+                if (next != UpdateDownload.Next.ALREADY_COMPLETE) {
+                    val total = info.size.takeIf { it > 0 } ?: (r.body.contentLength().takeIf { it > 0 }?.plus(done) ?: -1L)
+                    var lastEmit = 0L
+                    r.body.byteStream().use { input ->
+                        java.io.FileOutputStream(part, next == UpdateDownload.Next.APPEND).use { out ->
+                            val buf = ByteArray(64 * 1024)
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                out.write(buf, 0, n)
+                                md.update(buf, 0, n)
+                                done += n
+                                if (done > UpdateManifest.MAX_APK_BYTES || (info.size > 0 && done > info.size)) {
+                                    part.delete(); verifyFail(tr("файл больше заявленного", "file is larger than declared"))
+                                }
+                                if (total > 0 && done - lastEmit >= 128 * 1024) {
+                                    lastEmit = done
+                                    _phase.value = Phase.Downloading(info, (done.toFloat() / total).coerceIn(0f, 1f))
+                                }
                             }
                         }
                     }
                 }
                 _phase.value = Phase.Downloading(info, 1f)
-                if (info.size > 0 && done != info.size) error(tr("размер не совпадает", "size mismatch"))
+                if (info.size > 0 && done != info.size) {
+                    if (done < info.size) throw IOException(tr("соединение оборвалось", "connection closed early"))
+                    part.delete(); verifyFail(tr("размер не совпадает", "size mismatch"))
+                }
                 val sha = UpdateManifest.hex(md.digest())
-                if (!UpdateManifest.sameDigest(sha, info.sha256)) error(tr("sha256 не совпадает, файл повреждён или подменён", "sha256 mismatch, the file is damaged or tampered with"))
+                if (!UpdateManifest.sameDigest(sha, info.sha256)) {
+                    part.delete(); verifyFail(tr("sha256 не совпадает, файл повреждён или подменён", "sha256 mismatch, the file is damaged or tampered with"))
+                }
             }
-            verifyApk(app, file, info)
+            if (!part.renameTo(file)) { part.copyTo(file, overwrite = true); part.delete() }
+            try {
+                verifyApk(app, file, info)
+            } catch (t: Throwable) {
+                file.delete()
+                throw if (t is IllegalStateException) UpdateDownload.VerifyException(t.message ?: "verify failed") else t
+            }
             return file
-        } catch (t: Throwable) {
-            file.delete()
+        } catch (t: UpdateDownload.VerifyException) {
+            part.delete(); file.delete()
             throw t
         }
     }

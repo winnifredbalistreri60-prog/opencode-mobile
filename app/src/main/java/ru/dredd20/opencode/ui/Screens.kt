@@ -1,6 +1,8 @@
 package ru.dredd20.opencode.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -71,7 +73,7 @@ fun SetupScreen(
         )
         if (installing || progressPct > 0) {
             LinearProgressIndicator(progress = { (progressPct.coerceIn(0, 100)) / 100f }, modifier = Modifier.fillMaxWidth())
-            Text("$progressPct%  $message", modifier = Modifier.fillMaxWidth())
+            Text(StatusText.setupProgress(progressPct, message, error), modifier = Modifier.fillMaxWidth())
         }
         if (error != null) {
             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth())
@@ -125,6 +127,8 @@ fun SettingsScreen(
     onCheckUpdates: () -> Unit = {},
     updateSource: String = "",
     onPlugins: () -> Unit = {},
+    termuxActions: TermuxActions? = null,
+    termuxBusy: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var showLogs by remember { mutableStateOf(twoPane) }
@@ -136,7 +140,8 @@ fun SettingsScreen(
             ModeRow(tr("Termux", "Termux"), mode == RuntimeMode.TERMUX) { onMode(RuntimeMode.TERMUX) }
             ModeRow(tr("Удалённый сервер", "Remote server"), mode == RuntimeMode.REMOTE) { onMode(RuntimeMode.REMOTE) }
             if (mode == RuntimeMode.TERMUX && !termuxHint.isNullOrBlank()) {
-                Text(termuxHint, style = MaterialTheme.typography.bodySmall)
+                if (termuxActions != null) TermuxSetupBlock(termuxHint, termuxActions, error = null)
+                else Text(termuxHint, style = MaterialTheme.typography.bodySmall)
             }
             if (mode == RuntimeMode.REMOTE) {
                 OutlinedTextField(remoteUrl, onRemoteUrl, label = { Text("URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -166,12 +171,12 @@ fun SettingsScreen(
                     },
                 )
             }
-            Text("$phase — $message", style = MaterialTheme.typography.bodySmall)
-            if (phase == "STOPPING") {
+            Text(if (message.isBlank()) phase else "$phase — $message", style = MaterialTheme.typography.bodySmall)
+            if (phase == "STOPPING" || termuxBusy) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onStart, enabled = !running || mode == RuntimeMode.REMOTE) { Text(tr("Запустить", "Start")) }
+                Button(onClick = onStart, enabled = (!running && !termuxBusy) || mode == RuntimeMode.REMOTE) { Text(tr("Запустить", "Start")) }
                 OutlinedButton(onClick = onStop, enabled = running || mode == RuntimeMode.REMOTE) { Text(tr("Стоп", "Stop")) }
                 OutlinedButton(onClick = onUpdate) { Text(tr("Обновить OpenCode", "Update OpenCode")) }
             }
@@ -238,9 +243,14 @@ private fun ModeRow(label: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun CategoryToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+    // The whole row toggles, label included (run4 item 4).
+    Row(
+        Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
         Text(label, modifier = Modifier.weight(1f).padding(end = 12.dp))
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

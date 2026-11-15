@@ -30,6 +30,12 @@ while i < len(argv):
         args["file"] = argv[i+1]; i += 2
     elif a in ("-t", "--title") and i + 1 < len(argv):
         args["title"] = argv[i+1]; i += 2
+    elif cmd == "location" and a in ("-r", "--request") and i + 1 < len(argv):
+        args["request"] = argv[i+1]; i += 2
+    elif cmd == "location" and a in ("-p", "--provider") and i + 1 < len(argv):
+        args["provider"] = argv[i+1]; i += 2
+    elif cmd == "location" and a in ("-T", "--timeout") and i + 1 < len(argv):
+        args["timeout"] = int(argv[i+1]); i += 2
     elif a in ("-e", "--exec"):
         args["exec"] = True; i += 1
     elif a in ("-b", "--baud") and i + 1 < len(argv):

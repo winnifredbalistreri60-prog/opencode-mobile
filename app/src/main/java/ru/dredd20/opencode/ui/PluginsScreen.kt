@@ -3,6 +3,8 @@ package ru.dredd20.opencode.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -72,6 +74,7 @@ fun PluginsScreen(
     var tab by remember { mutableStateOf(0) }
     var selected by remember { mutableStateOf<RegistryServer?>(null) }
     var confirmRemove by remember { mutableStateOf<String?>(null) }
+    var editKeys by remember { mutableStateOf<InstalledServer?>(null) }
     LaunchedEffect(Unit) { ctl.start() }
     BackHandler(enabled = selected != null && !twoPane) { selected = null }
 
@@ -87,7 +90,7 @@ fun PluginsScreen(
                     TextButton(onClick = { ctl.message = null }) { Text("OK") }
                 }
             }
-            if (tab == 0) InstalledList(ctl, onSignIn, onRemove = { confirmRemove = it }, onCatalog = { tab = 1 })
+            if (tab == 0) InstalledList(ctl, onSignIn, onRemove = { confirmRemove = it }, onEditKeys = { editKeys = it }, onCatalog = { tab = 1 })
             else CatalogList(ctl, selectedName = selected?.name, onSelect = { selected = it })
         }
     }
@@ -113,18 +116,67 @@ fun PluginsScreen(
     }
 
     confirmRemove?.let { name ->
+        val inCfg = ctl.installed.firstOrNull { it.name == name }?.inConfig == true
         AlertDialog(
             onDismissRequest = { confirmRemove = null },
             title = { Text(tr("Удалить «$name»?", "Remove “$name”?")) },
-            text = { Text(tr("Сервер отключится и пропадёт из opencode.json вместе с сохранёнными заголовками.", "The server disconnects and is removed from opencode.json with its saved headers.")) },
+            text = { Text(removeText(ctl.persistent, inCfg)) },
             confirmButton = { TextButton(onClick = { ctl.uninstall(name); confirmRemove = null }) { Text(tr("Удалить", "Remove")) } },
             dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text(tr("Отмена", "Cancel")) } },
         )
     }
+    editKeys?.let { srv -> EditKeysDialog(ctl, srv, onClose = { editKeys = null }) }
+}
+
+/** run5 bug 3: the remove dialog must not promise an opencode.json change the app cannot make. */
+private fun removeText(persistent: Boolean, inConfig: Boolean): String = when {
+    !persistent -> tr(
+        "Сервер отключится в работающем opencode serve. Конфиг сервера приложение не меняет: если он прописан в opencode.json сервера, после перезапуска вернётся.",
+        "The server is disconnected in the running opencode serve. The app does not change the server's config: if it is listed in the server's opencode.json, it comes back after a server restart.",
+    )
+    inConfig -> tr("Сервер отключится и пропадёт из opencode.json вместе с сохранёнными заголовками.", "The server disconnects and is removed from opencode.json with its saved headers.")
+    else -> tr("Сервер отключится. В opencode.json его нет, поэтому файл не меняется.", "The server disconnects. It is not in opencode.json, so the file is not changed.")
 }
 
 @Composable
-private fun InstalledList(ctl: PluginsController, onSignIn: () -> Unit, onRemove: (String) -> Unit, onCatalog: () -> Unit) {
+private fun EditKeysDialog(ctl: PluginsController, s: InstalledServer, onClose: () -> Unit) {
+    val values = remember(s.name) { mutableStateMapOf<String, String>() }
+    val reveal = remember(s.name) { mutableStateMapOf<String, Boolean>() }
+    var error by remember(s.name) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(tr("Сменить ключ «${s.name}»", "Change key for “${s.name}”")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(tr(
+                    "Введите новое значение. Пустое поле оставляет старое. Если старое значение начиналось с «Bearer », префикс сохранится.",
+                    "Enter the new value. An empty field keeps the old one. If the old value started with “Bearer ”, the prefix is kept.",
+                ), style = MaterialTheme.typography.bodySmall)
+                s.headerNames.forEach { h ->
+                    val shown = reveal[h] == true
+                    OutlinedTextField(
+                        values[h] ?: "", { values[h] = it },
+                        label = { Text(h) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = { TextButton(onClick = { reveal[h] = !shown }) { Text(if (shown) tr("Скрыть", "Hide") else tr("Показать", "Show")) } },
+                    )
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = ctl.busy == null, onClick = {
+                error = null
+                ctl.updateHeaders(s.name, values.toMap()) { err -> if (err == null) onClose() else error = err }
+            }) { Text(tr("Сохранить", "Save")) }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text(tr("Отмена", "Cancel")) } },
+    )
+}
+
+@Composable
+private fun InstalledList(ctl: PluginsController, onSignIn: () -> Unit, onRemove: (String) -> Unit, onEditKeys: (InstalledServer) -> Unit, onCatalog: () -> Unit) {
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -132,8 +184,8 @@ private fun InstalledList(ctl: PluginsController, onSignIn: () -> Unit, onRemove
     ) {
         if (!ctl.persistent) item {
             Notice(tr(
-                "В этом режиме конфиг сервера не принадлежит приложению: установка подключает сервер только до его перезапуска. Постоянно сохраняется во встроенном режиме.",
-                "In this mode the server config is not the app's: an install lasts until the server restarts. Installs persist in embedded mode.",
+                "В этом режиме приложение не видит и не меняет opencode.json сервера. Серверы из его конфига работают как обычно; установленное отсюда подключается только до перезапуска сервера. Постоянная установка есть во встроенном режиме.",
+                "In this mode the app neither sees nor changes the server's opencode.json. Servers from its config work as usual; what you install here stays connected only until the server restarts. Permanent installs are in embedded mode.",
             ))
         }
         if (!ctl.serverReachable) item {
@@ -145,7 +197,9 @@ private fun InstalledList(ctl: PluginsController, onSignIn: () -> Unit, onRemove
                 Text(tr("Сервер загружает MCP…", "The server is loading MCP…"), style = MaterialTheme.typography.bodySmall)
             }
         }
-        items(ctl.installed, key = { it.name }) { s -> InstalledCard(s, busy = ctl.busy == s.name, onSignIn = onSignIn, onRemove = { onRemove(s.name) }) }
+        items(ctl.installed, key = { it.name }) { s ->
+            InstalledCard(s, persistent = ctl.persistent, busy = ctl.busy == s.name, onSignIn = onSignIn, onRemove = { onRemove(s.name) }, onEditKeys = { onEditKeys(s) })
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { ctl.refreshInstalled(poll = true) }) { Text(tr("Обновить статус", "Refresh status")) }
@@ -159,7 +213,8 @@ private fun InstalledList(ctl: PluginsController, onSignIn: () -> Unit, onRemove
 }
 
 @Composable
-private fun InstalledCard(s: InstalledServer, busy: Boolean, onSignIn: () -> Unit, onRemove: () -> Unit) {
+private fun InstalledCard(s: InstalledServer, persistent: Boolean, busy: Boolean, onSignIn: () -> Unit, onRemove: () -> Unit, onEditKeys: () -> Unit) {
+    val hasKey = s.headerNames.isNotEmpty()
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -173,10 +228,20 @@ private fun InstalledCard(s: InstalledServer, busy: Boolean, onSignIn: () -> Uni
             if (s.builtIn) Text(tr("Встроенный: датчики, камера, USB и др. Не удаляется; доступы — в настройках приложения.", "Built-in: sensors, camera, USB, etc. Cannot be removed; access is set in app settings."), style = MaterialTheme.typography.bodySmall)
             if (s.target.isNotBlank()) Text("${s.type} · ${s.target}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (s.headerNames.isNotEmpty()) Text(tr("Заголовки: ", "Headers: ") + s.headerNames.joinToString() + " (••••)", style = MaterialTheme.typography.bodySmall)
-            if (!s.inConfig && !s.builtIn) Text(tr("Нет в opencode.json: пропадёт после перезапуска сервера.", "Not in opencode.json: gone after a server restart."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            // Only in embedded mode do we read the real opencode.json; in Termux/Remote the server's config is invisible.
+            if (persistent && !s.inConfig && !s.builtIn) Text(tr("Нет в opencode.json: пропадёт после перезапуска сервера.", "Not in opencode.json: gone after a server restart."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (s.status == "needs_auth" && hasKey) Text(tr(
+                "Сервер не принял ключ. Проверьте его и нажмите «Сменить ключ».",
+                "The server did not accept the key. Check it and tap “Change key”.",
+            ), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             s.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (s.status == "needs_auth") Button(onClick = onSignIn) { Text(tr("Войти", "Sign in")) }
+                // run5 bug 4: OAuth sign-in only for servers without an API key; keyed servers get “Change key”.
+                if (s.status == "needs_auth" && !hasKey) Button(onClick = onSignIn) { Text(tr("Войти", "Sign in")) }
+                if (persistent && hasKey && !s.builtIn) {
+                    if (s.status == "needs_auth") Button(onClick = onEditKeys, enabled = !busy) { Text(tr("Сменить ключ", "Change key")) }
+                    else OutlinedButton(onClick = onEditKeys, enabled = !busy) { Text(tr("Сменить ключ", "Change key")) }
+                }
                 if (!s.builtIn) OutlinedButton(onClick = onRemove, enabled = !busy) { Text(tr("Удалить", "Remove")) }
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             }
@@ -208,9 +273,12 @@ private fun CatalogList(ctl: PluginsController, selectedName: String?, onSelect:
                 label = { Text(tr("Поиск в Official MCP Registry", "Search the Official MCP Registry")) },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(tr("Только доступные на телефоне", "Only available on the phone"), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                Switch(checked = ctl.onlyAvailable, onCheckedChange = { ctl.onlyAvailable = it })
+            Row(
+                Modifier.fillMaxWidth().toggleable(value = ctl.onlyAvailable, role = Role.Switch, onValueChange = { ctl.onlyAvailable = it }),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(tr("Скрыть то, что телефон пока не запустит (оставить только удалённые HTTP-серверы)", "Hide what the phone cannot run yet (show only remote HTTP servers)"), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                Switch(checked = ctl.onlyAvailable, onCheckedChange = null)
             }
             val stamp = if (ctl.cachedAt > 0) DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(ctl.cachedAt)) else null
             if (ctl.offline) Notice(tr("Офлайн: показан сохранённый каталог", "Offline: showing the saved catalog") + (stamp?.let { " ($it)" } ?: ""))
@@ -296,7 +364,12 @@ private fun ServerDetail(ctl: PluginsController, s: RegistryServer, onClose: () 
                     OutlinedTextField(
                         values[h.name] ?: "", { values[h.name] = it },
                         label = { Text(h.name + if (h.required) " *" else "") },
-                        supportingText = { if (h.description.isNotBlank()) Text(h.description, maxLines = 3) },
+                        supportingText = {
+                            val tpl = h.value?.takeIf { h.variables.size == 1 }
+                            val hint = tpl?.let { tr("Будет записано как: ", "Written as: ") + it.replace("{${h.variables[0]}}", tr("‹ваш ввод›", "‹your input›")) }
+                            val text = listOfNotNull(h.description.ifBlank { null }, hint).joinToString("\n")
+                            if (text.isNotEmpty()) Text(text, maxLines = 4)
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         visualTransformation = if (h.secret && !shown) PasswordVisualTransformation() else VisualTransformation.None,
@@ -309,8 +382,8 @@ private fun ServerDetail(ctl: PluginsController, s: RegistryServer, onClose: () 
                     style = MaterialTheme.typography.labelSmall,
                 )
                 Text(
-                    tr("Сторонний сервер: запросы агента и их данные уйдут к его владельцу. Если сервер требует вход, нажмите «Войти» во вкладке «Установленные».",
-                        "Third-party server: agent requests and their data go to its owner. If it needs sign-in, tap “Sign in” on the Installed tab."),
+                    tr("Сторонний сервер: запросы агента и их данные уйдут к его владельцу. Если серверу нужен вход через браузер (OAuth), во вкладке «Установленные» появится «Войти»; ключ там же можно сменить.",
+                        "Third-party server: agent requests and their data go to its owner. If it needs a browser sign-in (OAuth), the Installed tab shows “Sign in”; a key can be changed there too."),
                     style = MaterialTheme.typography.labelSmall,
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }

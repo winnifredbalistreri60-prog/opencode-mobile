@@ -4,7 +4,7 @@
 
 Приложение поднимает официальный Linux-бинарник `opencode serve` (linux-arm64 или linux-x64) в среде Ubuntu 24.04 через PRoot и показывает **официальный веб-UI** во встроенном WebView. Есть встроенный Phone API (имена команд совместимы с Termux:API, плюс MCP-сервер `phone`), чтобы агент мог работать с датчиками и функциями устройства.
 
-Пакет: `ru.dredd20.opencode`. Текущий выпуск: **0.2.0** (versionCode 10). Сборки в этом дереве — **debug**.
+Пакет: `ru.dredd20.opencode`. Текущий выпуск: **0.2.1** (versionCode 11). Сборки в этом дереве — **debug**.
 
 [English README](README.en.md) · [Список изменений](CHANGELOG.md) · [Лицензии третьих сторон](NOTICE)
 
@@ -25,7 +25,7 @@
 
 Распространяется как debug-APK, не через Google Play. Можно ставить поверх предыдущей 0.1.x с той же подписью, среда и `opencode.json` сохраняются.
 
-1. Скачайте `opencode-mobile-0.2.0.apk` из [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (когда релиз будет опубликован) или соберите сами.
+1. Скачайте `opencode-mobile-0.2.1.apk` из [Releases](https://github.com/winnifredbalistreri60-prog/opencode-mobile/releases) (когда релиз будет опубликован) или соберите сами.
 2. Разрешите установку из неизвестного источника и установите пакет.
 3. На экране Setup подтвердите дисклеймер и нажмите **Install**. Нужны интернет и примерно 150 МБ сети / ~800 МБ на диске (ubuntu-base + OpenCode CLI).
 4. После «Ready: OpenCode 2.3.0» нажмите **Start**. Откроется официальный веб-UI.
@@ -47,14 +47,28 @@
 включения «Разрешить установку из этого источника» и возврата диалог сам переключается на «Установить».
 Перед установкой локальный сервер останавливается. Данные (rootfs, настройки) сохраняются.
 
-**Вручную.** 0.1.3 ставится поверх 0.1.2 / 0.1.1 / 0.1.0, если сертификат тот же (SHA-256 `65b96eb07abe416771b1a8c96184d87641d2e1cf51954ec340d40d34b32d2a90` для этих debug-сборок). Данные rootfs сохраняются. Скрипты Phone API обновляются при каждом Start.
+**Вручную.** Новая версия ставится поверх 0.2.x / 0.1.x, если сертификат тот же (SHA-256 `65b96eb07abe416771b1a8c96184d87641d2e1cf51954ec340d40d34b32d2a90` для этих debug-сборок). Данные rootfs сохраняются. Скрипты Phone API обновляются при каждом Start.
 
 ### Режим Termux
 
-1. Установите Termux из F-Droid (или официальный APK под вашу ABI). Приложение Google Play Termux не подходит.
-2. В `~/.termux/termux.properties` добавьте `allow-external-apps=true` и выполните `termux-reload-settings`.
-3. Выдайте OpenCode Mobile разрешение `RUN_COMMAND`.
-4. В настройках приложения выберите режим Termux и Start. Если Termux не установлен, на экране будет инструкция, а не бесконечное «Waiting».
+Нужен телефон **arm64** и Termux из F-Droid или GitHub (Termux из Google Play не подходит). Официальный OpenCode для Linux собран под glibc, а Termux живёт на Bionic, поэтому `npm i -g opencode-ai` в Termux не работает. Скрипт установки делает так:
+
+- ставит glibc самого Termux (`glibc-repo`, `glibc-runner`) и `patchelf`;
+- скачивает официальный `opencode-linux-<arch>.tar.gz` с GitHub и проверяет sha256 (для 2.3.0 суммы зашиты в скрипт);
+- меняет у бинарника только ELF-интерпретатор на `$PREFIX/glibc/lib/ld-linux-*.so` (RPATH не трогает: он ломает встроенный payload);
+- кладёт команду `opencode` в `$PREFIX/bin` (убирает `LD_PRELOAD` и запускает бинарник напрямую);
+- включает `allow-external-apps=true` и выполняет `termux-reload-settings`.
+
+Шаги:
+
+1. Установите Termux и откройте его один раз.
+2. В OpenCode Mobile: Настройки приложения → Режим: Termux → **«Скопировать команду установки»**. В Termux долгое нажатие → Paste, затем Enter. Скрипт сохраняется в `~/ocm-termux-install.sh`, повторный запуск безопасен и обновляет бинарник.
+   Тот же скрипт лежит в репозитории: `scripts/termux-install.sh`. Когда 0.2.1 попадёт в `main`, можно и так:
+   `curl -fsSL https://raw.githubusercontent.com/winnifredbalistreri60-prog/opencode-mobile/main/scripts/termux-install.sh | bash`
+3. Разрешите приложению «запускать команды в Termux» (кнопка на экране или Настройки Android → Приложения → OpenCode Mobile → Разрешения).
+4. Нажмите «Запустить». Пароль сервера передаётся через stdin и файл 0600 в `~/.opencode-mobile/`, а не в аргументах. «Стоп» завершает только наш `opencode serve` (по pid и порту). Если запуск не удался, текст ошибки из Termux (stderr и код выхода) показывается на экране и пишется в `termux.log`.
+
+Ограничение: на x86_64 Android (эмуляторы, часть Chromebook) seccomp убивает glibc-загрузчик (`Bad system call`, код 159). Там используйте встроенный режим.
 
 При смене режима работающий сервер предыдущего режима останавливается (после подтверждения).
 

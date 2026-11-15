@@ -2,6 +2,23 @@
 
 All notable releases of this unofficial OpenCode Mobile client. The official OpenCode CLI remains a separate project ([anomalyco/opencode](https://github.com/anomalyco/opencode)).
 
+## 0.2.1 — 2026-11-15
+
+Debug build, versionCode 11. Same debug certificate as 0.1.0–0.2.0 (`65b96eb0…2a90`). Installs over 0.2.0 and keeps the environment, `opencode.json` and settings.
+
+- **Termux mode works again (BUG-24).** New install script (`scripts/termux-install.sh`, also inside the app): Termux glibc (`glibc-repo`, `glibc-runner`) + `patchelf`, the official OpenCode Linux build with a sha256 check, only the ELF interpreter patched, an `opencode` launcher in `$PREFIX/bin`, `allow-external-apps=true`. The app shows the steps and a **Copy install command** button, plus **Open Termux** and a button for the “Run commands in Termux” permission. Fresh Termux installs get a current `libc++` so `patchelf` starts. arm64 phones only: on x86_64 Android seccomp kills the glibc loader (exit 159), and the error says so.
+- **Termux errors are visible (BUG-25).** `RUN_COMMAND` now uses a `PendingIntent`: stdout, stderr, exit code and Termux’s own error reach the app. The reason is shown under the Start button and written to `termux.log` (with the tail of `serve.log`). The password is redacted.
+- **Termux password is not in argv.** It goes through stdin into a 0600 file in `~/.opencode-mobile/`, which `opencode serve` reads via `exec`.
+- Stop no longer uses `pkill -f`: only our pid on our port is stopped; other `opencode serve` processes survive.
+- `termux-location` tries a fresh fix (default 15 s, `-T`) on the enabled providers before the newest last-known location; the reply has `source` and `age_ms`.
+- The setup error is shown once; the embedded status names the port once; empty status is no longer “IDLE — ”.
+- Start, Stop and install in the runtime service are serialized; the first Start right after Stop no longer races with the service shutting down. Termux health checks no longer run on the main thread (they always timed out before).
+- **Updater:** “Check for updates” re-checks that the downloaded file still exists and matches sha256 before saying “File verified”. A network drop says “Download failed” (not “Update rejected”), and Retry resumes from a `.part` file with `Range`; sha256 is checked at the end. The auto-check switch toggles by tapping its label.
+- **Remote password** is encrypted with an Android Keystore key (AES-GCM); the old plaintext value is migrated at app start.
+- **Plugins (run5):** registry header templates are filled (`Bearer {smithery_api_key}` + your key → `Bearer <key>`, not the bare key; the field shows how the value will be written). The default name skips generic id segments (`com.notion/mcp` → `notion`) and stays unique. **Change key** for installed servers with headers (keeps the `Bearer ` prefix); “Sign in” (OAuth) is shown only for servers without an API key, and a keyed server that needs auth says the key was not accepted. Remote/Termux: no false “Not in opencode.json” mark, and the remove dialog no longer promises to edit opencode.json. Clearer catalog filter text and WebView-too-old message.
+- `PROMPT.md`: a short brief for continuing development (architecture, modules, build, rules, known issues, next stages).
+- 28 new unit tests (Termux serve/stop scripts run in real bash with a fake opencode, error texts and redaction, install script checks, status text, location plan, download resume, secret format, header templates, default names, WebView text). 117 tests in total.
+
 ## 0.2.0 — 2026-11-15
 
 Debug build, versionCode 10. Same debug certificate as 0.1.0–0.1.3 (`65b96eb0…2a90`). Installs over 0.1.3 and keeps the environment and your config.

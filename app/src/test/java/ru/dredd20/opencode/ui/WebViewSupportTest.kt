@@ -30,4 +30,13 @@ class WebViewSupportTest {
         assertTrue(js.contains("URL.parse"))
         assertTrue(js.contains("URL.canParse"))
     }
+
+    @Test
+    fun webView91MessageDoesNotSayAtLeast80() {
+        val m = WebViewSupport.blockingMessage(91, false, false)!!
+        assertTrue(m.contains("126"))
+        assertTrue(!m.contains("80"))
+        val ru = WebViewSupport.blockingMessage(91, false, true)!!
+        assertTrue(!ru.contains("хотя бы 80"))
+    }
 }

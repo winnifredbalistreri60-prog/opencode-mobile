@@ -14,7 +14,7 @@ import ru.dredd20.opencode.runtime.CommandResult
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-/** RUN_COMMAND helper, adapted from MURF (MIT). */
+/** RUN_COMMAND helper, adapted from MURF (MIT). Every command gets a PendingIntent for its result. */
 object Termux {
     const val PACKAGE = "com.termux"
     const val PERMISSION = "com.termux.permission.RUN_COMMAND"
@@ -28,6 +28,9 @@ object Termux {
     private val ids = AtomicInteger((System.currentTimeMillis() % 100000).toInt())
     private val waiting = ConcurrentHashMap<Int, CompletableDeferred<CommandResult>>()
 
+    /** Called for results nobody waits for any more (for example serve exiting after Stop). */
+    @Volatile var onLateResult: ((Int, CommandResult) -> Unit)? = null
+
     fun isInstalled(context: Context): Boolean = runCatching {
         context.packageManager.getPackageInfo(PACKAGE, 0); true
     }.getOrDefault(false)
@@ -37,16 +40,7 @@ object Termux {
 
     fun ready(context: Context) = isInstalled(context) && hasPermission(context)
 
-    fun instructions(): String = tr(
-        "1. Установите Termux с F-Droid или GitHub (не из Play).\n" +
-            "2. В Termux: pkg install opencode или поставьте официальный бинарник.\n" +
-            "3. Добавьте в ~/.termux/termux.properties строку allow-external-apps=true и выполните termux-reload-settings.\n" +
-            "4. Разрешите этому приложению «запускать команды в Termux».",
-        "1. Install Termux from F-Droid or GitHub (not Play).\n" +
-            "2. In Termux: pkg install opencode, or install the official binary.\n" +
-            "3. Add allow-external-apps=true to ~/.termux/termux.properties and run termux-reload-settings.\n" +
-            "4. Grant this app the “Run commands in Termux” permission.",
-    )
+    fun instructions(): String = TermuxInstall.instructions()
 
     fun notReadyReason(context: Context): String? = when {
         !isInstalled(context) -> tr("Установите Termux (F-Droid/GitHub)", "Install Termux (F-Droid/GitHub)")
@@ -54,45 +48,71 @@ object Termux {
         else -> null
     }
 
-    private fun baseIntent(command: String, background: Boolean): Intent =
+    private fun baseIntent(command: String, stdin: String?, label: String?): Intent =
         Intent(ACTION).setClassName(PACKAGE, SERVICE)
             .putExtra("com.termux.RUN_COMMAND_PATH", BASH)
             .putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-lc", command))
             .putExtra("com.termux.RUN_COMMAND_WORKDIR", HOME)
-            .putExtra("com.termux.RUN_COMMAND_BACKGROUND", background)
-            .putExtra("com.termux.RUN_COMMAND_SESSION_ACTION", if (background) "2" else "0")
+            .putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
+            .putExtra("com.termux.RUN_COMMAND_SESSION_ACTION", "2")
+            .apply {
+                if (stdin != null) putExtra("com.termux.RUN_COMMAND_STDIN", stdin)
+                if (label != null) putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", label)
+            }
 
     private fun start(context: Context, intent: Intent) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
     }
 
-    fun runDetached(context: Context, command: String) {
-        if (!ready(context)) return
-        start(context, baseIntent(command, background = true))
-    }
+    /** A started command. [result] completes when the command exits (stdout, stderr, exit code). */
+    class Launched(val id: Int, val result: CompletableDeferred<CommandResult>)
 
-    suspend fun run(context: Context, command: String, timeoutMs: Long = 120_000): CommandResult {
-        if (!isInstalled(context)) return CommandResult("", "", null, tr("Termux не установлен", "Termux is not installed"))
-        if (!hasPermission(context)) return CommandResult("", "", null, tr("Нет разрешения RUN_COMMAND", "RUN_COMMAND permission missing"))
+    /**
+     * Start [command] in the background with a result PendingIntent, without waiting.
+     * [stdin] is passed through RUN_COMMAND_STDIN (not argv). Returns a failed result if it cannot start.
+     */
+    fun launch(context: Context, command: String, stdin: String? = null, label: String? = null): Launched {
         val id = ids.incrementAndGet()
         val deferred = CompletableDeferred<CommandResult>()
+        if (!isInstalled(context)) {
+            deferred.complete(CommandResult("", "", null, tr("Termux не установлен", "Termux is not installed")))
+            return Launched(id, deferred)
+        }
+        if (!hasPermission(context)) {
+            deferred.complete(CommandResult("", "", null, tr("Нет разрешения RUN_COMMAND", "RUN_COMMAND permission missing")))
+            return Launched(id, deferred)
+        }
         waiting[id] = deferred
         val resultIntent = Intent(context, TermuxResultReceiver::class.java).putExtra(EXTRA_ID, id)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
         val pi = PendingIntent.getBroadcast(context, id, resultIntent, flags)
-        val intent = baseIntent(command, background = true).putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", pi)
-        return try {
+        val intent = baseIntent(command, stdin, label).putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", pi)
+        try {
             start(context, intent)
-            withTimeoutOrNull(timeoutMs) { deferred.await() }
-                ?: CommandResult("", "", null, tr("Termux не ответил за ${timeoutMs / 1000} с", "Termux did not answer within ${timeoutMs / 1000} s"))
         } catch (e: Exception) {
-            CommandResult("", "", null, tr("Не удалось запустить Termux: ${e.message}", "Could not start Termux: ${e.message}"))
-        } finally {
             waiting.remove(id)
+            deferred.complete(CommandResult("", "", null, tr("Не удалось запустить Termux: ${e.message}", "Could not start Termux: ${e.message}")))
+        }
+        return Launched(id, deferred)
+    }
+
+    /** Stop waiting for [id]; a later result goes to [onLateResult]. */
+    fun forget(id: Int) { waiting.remove(id) }
+
+    suspend fun run(context: Context, command: String, timeoutMs: Long = 120_000, stdin: String? = null): CommandResult {
+        val l = launch(context, command, stdin)
+        return try {
+            withTimeoutOrNull(timeoutMs) { l.result.await() }
+                ?: CommandResult("", "", null, tr("Termux не ответил за ${timeoutMs / 1000} с", "Termux did not answer within ${timeoutMs / 1000} s"))
+        } finally {
+            waiting.remove(l.id)
         }
     }
 
-    internal fun deliver(id: Int, result: CommandResult) { waiting[id]?.complete(result) }
+    internal fun deliver(id: Int, result: CommandResult) {
+        val d = waiting.remove(id)
+        if (d != null) d.complete(result) else onLateResult?.invoke(id, result)
+    }
 }
 
 class TermuxResultReceiver : BroadcastReceiver() {
@@ -108,7 +128,7 @@ class TermuxResultReceiver : BroadcastReceiver() {
                 stdout = bundle.getString("stdout").orEmpty(),
                 stderr = bundle.getString("stderr").orEmpty(),
                 exitCode = if (bundle.containsKey("exitCode")) bundle.getInt("exitCode") else null,
-                error = if (err > 0 && !errmsg.isNullOrBlank()) errmsg else null,
+                error = if (err > 0) (errmsg?.takeIf { it.isNotBlank() } ?: "Termux error $err") else null,
             )
         }
         Termux.deliver(id, res)

@@ -40,9 +40,11 @@ object WebViewSupport {
         if (major >= MIN_RECOMMENDED_MAJOR) return null
         if (major >= MIN_WITH_POLYFILL_MAJOR && canInjectDocumentStart) return null
         return if (russian) {
-            "Системный WebView $major слишком старый для интерфейса OpenCode (нужен 126+ или хотя бы 80 с поддержкой скриптов при загрузке документа). Обновите «Android System WebView» в магазине приложений."
+            if (major >= MIN_WITH_POLYFILL_MAJOR) "Системный WebView $major не умеет подключать скрипт до загрузки страницы, поэтому заплатку для старых версий не поставить. Интерфейсу OpenCode нужен WebView 126 или новее. Обновите «Android System WebView» в магазине приложений."
+            else "Системный WebView $major слишком старый для интерфейса OpenCode: нужен 126 или новее. Обновите «Android System WebView» в магазине приложений."
         } else {
-            "System WebView $major is too old for the OpenCode UI (need 126+, or at least 80 with document-start script support). Update “Android System WebView” from the app store."
+            if (major >= MIN_WITH_POLYFILL_MAJOR) "System WebView $major cannot inject a script before the page loads, so the fix for older versions cannot be applied. The OpenCode UI needs WebView 126 or newer. Update “Android System WebView” from the app store."
+            else "System WebView $major is too old for the OpenCode UI: it needs 126 or newer. Update “Android System WebView” from the app store."
         }
     }
 
