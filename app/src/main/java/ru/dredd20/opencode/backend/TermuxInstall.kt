@@ -32,7 +32,7 @@ object TermuxInstall {
     /** One paste for Termux: clean inherited libc paths, write the script and run it (stdin stays the terminal). */
     fun pasteCommand(script: String): String {
         require(script.lines().none { it.trim() == EOF_MARK }) { "script contains the heredoc marker" }
-        return "unset LD_LIBRARY_PATH\n" +
+        return "unset LD_PRELOAD LD_LIBRARY_PATH\n" +
             "cat > \"\$HOME/$SCRIPT_NAME\" <<'$EOF_MARK'\n" +
             script.trimEnd('\n') + "\n" +
             "$EOF_MARK\n" +

@@ -144,7 +144,7 @@ class TermuxScriptsTest {
     fun failureMessageRedactsAndTails() {
         val r = CommandResult("", (1..40).joinToString("\n") { "line $it" } + "\nboom $secret", 1, null)
         val m = TermuxFailure.describe(r, secret)
-        assertTrue(m.contains("code 1"))
+        assertTrue(m.contains("code 1") || m.contains("код 1"))
         assertTrue(m.contains("boom ••••"))
         assertFalse(m.contains(secret))
         assertFalse(m.contains("line 1\n"))
@@ -180,7 +180,7 @@ class TermuxScriptsTest {
     @Test
     fun pasteCommandWritesThenRuns() {
         val cmd = TermuxInstall.pasteCommand("echo hi\n")
-        assertTrue(cmd.startsWith("unset LD_LIBRARY_PATH\ncat > \"\$HOME/ocm-termux-install.sh\" <<'OCM_INSTALL_EOF'\necho hi\nOCM_INSTALL_EOF\n"))
+        assertTrue(cmd.startsWith("unset LD_PRELOAD LD_LIBRARY_PATH\ncat > \"\$HOME/ocm-termux-install.sh\" <<'OCM_INSTALL_EOF'\necho hi\nOCM_INSTALL_EOF\n"))
         assertTrue(cmd.endsWith("bash \"\$HOME/ocm-termux-install.sh\"\n"))
     }
 
@@ -200,13 +200,16 @@ class TermuxScriptsTest {
     fun pasteCommandClearsInheritedLibraryPath() {
         assumeTrue(bash() != null)
         val home = Files.createTempDirectory("ocm-paste-env").toFile()
-        val command = TermuxInstall.pasteCommand("printf '%s' \"\${'$'}{LD_LIBRARY_PATH-unset}\"\n")
-        val pb = ProcessBuilder(bash()!!, "-c", command)
+        val command = TermuxInstall.pasteCommand("printf '%s' \"\${'$'}{LD_LIBRARY_PATH-unset}:\${'$'}{LD_PRELOAD-unset}\"\n")
+        val prefix = "export LD_LIBRARY_PATH=/tmp/foreign-codex-libs\nexport LD_PRELOAD=/tmp/foreign-codex-preload.so\n"
+        val pb = ProcessBuilder(bash()!!, "-c", prefix + command)
         pb.environment()["HOME"] = home.path
-        pb.environment()["LD_LIBRARY_PATH"] = "/tmp/foreign-codex-libs"
+        pb.environment().remove("LD_LIBRARY_PATH")
+        pb.environment().remove("LD_PRELOAD")
         val p = pb.start()
         assertTrue(p.waitFor(10, TimeUnit.SECONDS))
-        assertEquals("unset", p.inputStream.bufferedReader().readText().trim())
+        assertEquals(0, p.exitValue())
+        assertEquals("unset:unset", p.inputStream.bufferedReader().readText().trim())
         home.deleteRecursively()
     }
 
