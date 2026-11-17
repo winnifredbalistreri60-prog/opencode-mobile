@@ -135,6 +135,8 @@ class MainActivity : ComponentActivity() {
     /** Termux mode: last start error (stderr from Termux) and whether a start is in progress. */
     private var termuxError by mutableStateOf<String?>(null)
     private var termuxBusy by mutableStateOf(false)
+    private var modeSwitchBusy by mutableStateOf(false)
+    private var modeSwitchMessage by mutableStateOf<String?>(null)
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val dest = PhonePending.pictureDest
         if (ok && dest != null) PhonePending.pictureRequest?.complete(dest)
@@ -356,7 +358,7 @@ class MainActivity : ComponentActivity() {
                             )
                             if (dest == Dest.Settings) {
                                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                                    SettingsPane(mode, runtimeState, expanded, serve, userMessage, onStart = {
+                                    SettingsPane(mode, runtimeState, expanded, serve, userMessage ?: modeSwitchMessage, onStart = {
                                         userMessage = null
                                         when (AppPrefs.mode(this@MainActivity)) {
                                             RuntimeMode.EMBEDDED -> RuntimeService.send(this@MainActivity, RuntimeService.ACTION_START)
@@ -375,7 +377,13 @@ class MainActivity : ComponentActivity() {
                                     }, onStop = {
                                         when (AppPrefs.mode(this@MainActivity)) {
                                             RuntimeMode.EMBEDDED -> RuntimeService.send(this@MainActivity, RuntimeService.ACTION_STOP)
-                                            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity); tick++ }
+                                            RuntimeMode.TERMUX -> lifecycleScope.launch {
+                                                val result = TermuxServe.stop(this@MainActivity)
+                                                if (result != null && (result.error != null || result.exitCode != 0)) {
+                                                    userMessage = ru.dredd20.opencode.backend.TermuxFailure.describe(result)
+                                                }
+                                                tick++
+                                            }
                                             RuntimeMode.REMOTE -> userMessage = tr("Удалённый сервер не управляется из приложения", "The remote server is not stopped from the app")
                                         }
                                     }, onUpdate = {
@@ -602,6 +610,7 @@ class MainActivity : ComponentActivity() {
             onPlugins = onPlugins,
             termuxActions = if (mode == RuntimeMode.TERMUX) termuxActions() else null,
             termuxBusy = mode == RuntimeMode.TERMUX && termuxBusy,
+            termuxError = if (mode == RuntimeMode.TERMUX) termuxError else null,
             modifier = modifier,
         )
     }
@@ -680,10 +689,30 @@ class MainActivity : ComponentActivity() {
 
     private fun switchMode(next: RuntimeMode) {
         val prev = AppPrefs.mode(this)
-        if (prev == next) return
+        if (prev == next || modeSwitchBusy) return
+        if (prev == RuntimeMode.TERMUX) {
+            modeSwitchBusy = true
+            modeSwitchMessage = tr("Останавливаем сервер Termux перед сменой режима…", "Stopping the Termux server before switching modes…")
+            lifecycleScope.launch {
+                try {
+                    val result = TermuxServe.stop(this@MainActivity)
+                    if (result != null && (result.error != null || result.exitCode != 0)) {
+                        modeSwitchMessage = ru.dredd20.opencode.backend.TermuxFailure.describe(result)
+                    } else {
+                        AppPrefs.setMode(this@MainActivity, next)
+                        modeSwitchMessage = null
+                    }
+                } catch (e: Exception) {
+                    modeSwitchMessage = tr("Не удалось остановить сервер Termux: ${e.message}", "Could not stop the Termux server: ${e.message}")
+                } finally {
+                    modeSwitchBusy = false
+                }
+            }
+            return
+        }
         when (prev) {
             RuntimeMode.EMBEDDED -> if (RuntimeService.running) RuntimeService.send(this, RuntimeService.ACTION_STOP)
-            RuntimeMode.TERMUX -> lifecycleScope.launch { TermuxServe.stop(this@MainActivity) }
+            RuntimeMode.TERMUX -> Unit
             RuntimeMode.REMOTE -> Unit
         }
         AppPrefs.setMode(this, next)

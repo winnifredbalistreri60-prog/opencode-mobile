@@ -79,24 +79,36 @@ object TermuxServe {
             }
             delay(500)
         }
+        val tailResult = Termux.run(c, TermuxScripts.tailLog(40), 15_000)
+        val tail = TermuxFailure.redact(
+            listOf(tailResult.stdout, tailResult.stderr).filter { it.isNotBlank() }.joinToString("\n"),
+            password,
+        ).trim().takeLast(2_000)
         Termux.forget(launched.id)
-        // Do not leave a half-started server behind.
-        Termux.run(c, TermuxScripts.stop(port), 20_000)
+        // Do not leave a half-started server behind; retain state if Termux could not stop it.
+        val stopResult = Termux.run(c, TermuxScripts.stop(port), 20_000)
         val msg = tr(
             "opencode serve в Termux не ответил за ${START_TIMEOUT_MS / 1000} с. Откройте Termux и выполните opencode --version.",
             "opencode serve in Termux did not answer within ${START_TIMEOUT_MS / 1000} s. Open Termux and run opencode --version.",
         )
-        log(c, "start timeout on port $port")
-        Result.failure(IllegalStateException(msg))
+        val stopFailed = stopResult.error != null || stopResult.exitCode != 0
+        val details = buildList {
+            if (tail.isNotEmpty()) add("serve.log (tail):\n$tail")
+            if (stopFailed) add("Stop failed: ${TermuxFailure.describe(stopResult, password)}")
+        }
+        log(c, (listOf("start timeout on port $port") + details).joinToString("\n"))
+        Result.failure(IllegalStateException((listOf(msg) + details).joinToString("\n\n")))
     } }
 
     suspend fun stop(c: Context) = withContext(Dispatchers.IO) { lock.withLock {
         installLateLogger(c)
         val st = ServeState.read(stateFile(c))
-        if (Termux.ready(c)) {
-            val r = Termux.run(c, TermuxScripts.stop(st?.port), 20_000)
-            log(c, "stop (port ${st?.port ?: "?"}): ${r.stdout.trim().ifEmpty { "-" }} exit=${r.exitCode} err=${r.error ?: "-"}")
+        val result = if (Termux.ready(c)) Termux.run(c, TermuxScripts.stop(st?.port), 20_000) else null
+        if (result != null) {
+            log(c, "stop (port ${st?.port ?: "?"}): ${result.stdout.trim().ifEmpty { "-" }} exit=${result.exitCode} err=${result.error ?: "-"}")
+            if (result.error != null || result.exitCode != 0) return@withLock result
         }
         stateFile(c).delete()
+        result
     } }
 }

@@ -129,6 +129,7 @@ fun SettingsScreen(
     onPlugins: () -> Unit = {},
     termuxActions: TermuxActions? = null,
     termuxBusy: Boolean = false,
+    termuxError: String? = null,
     modifier: Modifier = Modifier,
 ) {
     var showLogs by remember { mutableStateOf(twoPane) }
@@ -140,7 +141,7 @@ fun SettingsScreen(
             ModeRow(tr("Termux", "Termux"), mode == RuntimeMode.TERMUX) { onMode(RuntimeMode.TERMUX) }
             ModeRow(tr("Удалённый сервер", "Remote server"), mode == RuntimeMode.REMOTE) { onMode(RuntimeMode.REMOTE) }
             if (mode == RuntimeMode.TERMUX && !termuxHint.isNullOrBlank()) {
-                if (termuxActions != null) TermuxSetupBlock(termuxHint, termuxActions, error = null)
+                if (termuxActions != null) TermuxSetupBlock(termuxHint, termuxActions, error = termuxError)
                 else Text(termuxHint, style = MaterialTheme.typography.bodySmall)
             }
             if (mode == RuntimeMode.REMOTE) {
