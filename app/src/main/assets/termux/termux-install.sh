@@ -21,9 +21,48 @@ MARK="OpenCode Mobile launcher"
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
+# A third-party runtime can export its own libc++ directory here. Termux's apt,
+# ffmpeg and other Bionic tools must not load libraries from that foreign path.
+if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+  say "Ignoring inherited LD_LIBRARY_PATH for Termux package tools"
+  unset LD_LIBRARY_PATH
+fi
+
 if [ -z "${PREFIX:-}" ] || [ ! -d "$PREFIX/bin" ] || ! command -v pkg >/dev/null 2>&1; then
   die "run this inside the Termux app (F-Droid or GitHub build)."
 fi
+
+# Remove only the two obsolete third-party sources known to return 404. Save an
+# exact copy first; preserve all unrelated one-line sources and deb822 stanzas.
+disable_obsolete_sources() {
+  local apt_dir="$PREFIX/etc/apt"
+  local source_file temp backup stamp
+  local -a source_files=()
+  shopt -s nullglob
+  source_files=("$apt_dir/sources.list" "$apt_dir/sources.list.d/"*.list "$apt_dir/sources.list.d/"*.sources)
+  shopt -u nullglob
+  stamp="$(date +%Y%m%d%H%M%S)"
+  for source_file in "${source_files[@]}"; do
+    [ -f "$source_file" ] || continue
+    grep -Eiq 'freebuff-termux|codebuff-termux' "$source_file" || continue
+    temp="$(mktemp "${source_file}.ocm.XXXXXX")" || die "cannot prepare $source_file"
+    if [[ "$source_file" == *.sources ]]; then
+      awk 'BEGIN { RS=""; ORS="\n\n" } tolower($0) !~ /(freebuff-termux|codebuff-termux)/ && length($0) { print }' "$source_file" > "$temp"
+    else
+      awk 'tolower($0) !~ /(freebuff-termux|codebuff-termux)/ { print }' "$source_file" > "$temp"
+    fi
+    if cmp -s "$source_file" "$temp"; then
+      rm -f "$temp"
+      continue
+    fi
+    backup="$source_file.ocm-backup-$stamp"
+    cp -p "$source_file" "$backup" || { rm -f "$temp"; die "cannot back up $source_file"; }
+    cat "$temp" > "$source_file" || { rm -f "$temp"; die "cannot update $source_file (original saved as $backup)"; }
+    rm -f "$temp"
+    say "Disabled obsolete Termux repository entry; backup: $backup"
+  done
+}
+disable_obsolete_sources
 
 case "$(uname -m)" in
   aarch64|arm64)
@@ -101,8 +140,9 @@ fi
 cat > "$LAUNCHER" <<'LAUNCHER_EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 # OpenCode Mobile launcher: runs the glibc build of OpenCode in Termux.
-# LD_PRELOAD (termux-exec) is a Bionic library and breaks the glibc loader, so drop it.
-unset LD_PRELOAD
+# Termux's LD_PRELOAD is a Bionic library, and third-party LD_LIBRARY_PATH values
+# can inject incompatible libc++ libraries into this glibc binary.
+unset LD_PRELOAD LD_LIBRARY_PATH
 exec "${HOME:-/data/data/com.termux/files/home}/.local/lib/opencode/opencode" "$@"
 LAUNCHER_EOF
 chmod 755 "$LAUNCHER"

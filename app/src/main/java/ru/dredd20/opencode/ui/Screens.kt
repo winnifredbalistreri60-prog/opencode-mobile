@@ -178,7 +178,9 @@ fun SettingsScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onStart, enabled = (!running && !termuxBusy) || mode == RuntimeMode.REMOTE) { Text(tr("Запустить", "Start")) }
                 OutlinedButton(onClick = onStop, enabled = running || mode == RuntimeMode.REMOTE) { Text(tr("Стоп", "Stop")) }
-                OutlinedButton(onClick = onUpdate) { Text(tr("Обновить OpenCode", "Update OpenCode")) }
+                if (mode == RuntimeMode.EMBEDDED) {
+                    OutlinedButton(onClick = onUpdate) { Text(tr("Обновить OpenCode", "Update OpenCode")) }
+                }
             }
             Text(tr("Плагины (MCP)", "Plugins (MCP)"), style = MaterialTheme.typography.titleMedium)
             Text(tr("Каталог удалённых MCP-серверов и установленные серверы.", "Catalog of remote MCP servers and installed servers."), style = MaterialTheme.typography.bodySmall)

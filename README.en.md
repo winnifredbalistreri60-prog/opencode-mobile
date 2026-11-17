@@ -64,8 +64,9 @@ Steps:
 
 1. Install Termux and open it once.
 2. In OpenCode Mobile: App settings → Mode: Termux → **Copy install command**. In Termux long-press → Paste, then Enter. The script is saved as `~/ocm-termux-install.sh`; running it again is safe and updates the binary.
-   The same script is `scripts/termux-install.sh` in the repo. Once 0.2.1 is in `main` you can also run:
-   `curl -fsSL https://raw.githubusercontent.com/winnifredbalistreri60-prog/opencode-mobile/main/scripts/termux-install.sh | bash`
+   The same script is `scripts/termux-install.sh` in the repo. After this update is published, you can also run:
+   `unset LD_LIBRARY_PATH; curl -fsSL https://raw.githubusercontent.com/winnifredbalistreri60-prog/opencode-mobile/main/scripts/termux-install.sh | bash`
+   The installer backs up and disables the obsolete `freebuff-termux` and `codebuff-termux` sources if present, and ignores inherited `LD_LIBRARY_PATH`.
 3. Allow the app to “Run commands in Termux” (button on screen or Android Settings → Apps → OpenCode Mobile → Permissions).
 4. Tap Start. The server password goes through stdin and a 0600 file in `~/.opencode-mobile/`, never through arguments. Stop ends only our `opencode serve` (by pid and port). If start fails, the Termux error (stderr and exit code) is shown on screen and written to `termux.log`.
 

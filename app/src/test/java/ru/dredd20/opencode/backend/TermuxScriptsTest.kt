@@ -168,7 +168,9 @@ class TermuxScriptsTest {
         assertTrue(s.contains("OC_VERSION=\"\${OCM_OPENCODE_VERSION:-${OpenCodeRelease.VERSION}}\""))
         assertTrue(s.contains("--set-interpreter"))
         assertFalse(s.contains("--set-rpath"))
-        assertTrue(s.contains("unset LD_PRELOAD"))
+        assertTrue(s.contains("unset LD_PRELOAD LD_LIBRARY_PATH"))
+        assertTrue(s.contains("freebuff-termux|codebuff-termux"))
+        assertTrue(s.contains(".ocm-backup-\$stamp"))
         assumeTrue(bash() != null)
         val p = ProcessBuilder(bash()!!, "-n", asset.path).redirectErrorStream(true).start()
         assertTrue(p.waitFor(10, TimeUnit.SECONDS))
@@ -178,7 +180,7 @@ class TermuxScriptsTest {
     @Test
     fun pasteCommandWritesThenRuns() {
         val cmd = TermuxInstall.pasteCommand("echo hi\n")
-        assertTrue(cmd.startsWith("cat > \"\$HOME/ocm-termux-install.sh\" <<'OCM_INSTALL_EOF'\necho hi\nOCM_INSTALL_EOF\n"))
+        assertTrue(cmd.startsWith("unset LD_LIBRARY_PATH\ncat > \"\$HOME/ocm-termux-install.sh\" <<'OCM_INSTALL_EOF'\necho hi\nOCM_INSTALL_EOF\n"))
         assertTrue(cmd.endsWith("bash \"\$HOME/ocm-termux-install.sh\"\n"))
     }
 
@@ -191,6 +193,20 @@ class TermuxScriptsTest {
         val p = pb.start()
         assertTrue(p.waitFor(10, TimeUnit.SECONDS))
         assertEquals("ok -home", p.inputStream.bufferedReader().readText().trim())
+        home.deleteRecursively()
+    }
+
+    @Test
+    fun pasteCommandClearsInheritedLibraryPath() {
+        assumeTrue(bash() != null)
+        val home = Files.createTempDirectory("ocm-paste-env").toFile()
+        val command = TermuxInstall.pasteCommand("printf '%s' \"\${'$'}{LD_LIBRARY_PATH-unset}\"\n")
+        val pb = ProcessBuilder(bash()!!, "-c", command)
+        pb.environment()["HOME"] = home.path
+        pb.environment()["LD_LIBRARY_PATH"] = "/tmp/foreign-codex-libs"
+        val p = pb.start()
+        assertTrue(p.waitFor(10, TimeUnit.SECONDS))
+        assertEquals("unset", p.inputStream.bufferedReader().readText().trim())
         home.deleteRecursively()
     }
 

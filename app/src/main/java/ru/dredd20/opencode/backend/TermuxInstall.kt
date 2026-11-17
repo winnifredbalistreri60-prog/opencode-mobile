@@ -13,15 +13,15 @@ object TermuxInstall {
     fun instructions(): String = tr(
         "1. Установите Termux с F-Droid или GitHub (не из Play), откройте его один раз.\n" +
             "2. Нажмите «Скопировать команду установки», вставьте её в Termux и нажмите Enter. " +
-            "Скрипт поставит glibc из glibc-repo, официальный OpenCode для Linux (sha256 проверяется), " +
-            "пропатчит только ELF-интерпретатор, создаст команду opencode и включит allow-external-apps=true.\n" +
+            "Скрипт уберёт устаревшие источники freebuff-termux/codebuff-termux (с резервной копией), " +
+            "очистит конфликтующий LD_LIBRARY_PATH, поставит glibc и OpenCode с проверкой sha256 и включит allow-external-apps=true.\n" +
             "3. Разрешите этому приложению «запускать команды в Termux» (кнопка ниже или Настройки Android → Приложения → OpenCode Mobile → Разрешения).\n" +
             "4. Нажмите «Запустить». Если не получится, причина из Termux появится здесь и в журнале (termux.log).\n" +
             "Нужен телефон arm64. На x86_64 Android (эмуляторы, часть Chromebook) seccomp не даёт запустить glibc-сборку: используйте встроенный режим.",
         "1. Install Termux from F-Droid or GitHub (not Play) and open it once.\n" +
             "2. Tap “Copy install command”, paste it into Termux and press Enter. " +
-            "The script installs glibc from glibc-repo and the official OpenCode Linux build (sha256 checked), " +
-            "patches only the ELF interpreter, creates the opencode command and sets allow-external-apps=true.\n" +
+            "The script backs up and disables obsolete freebuff-termux/codebuff-termux sources, clears a conflicting " +
+            "LD_LIBRARY_PATH, installs glibc and the official OpenCode build (sha256 checked), then sets allow-external-apps=true.\n" +
             "3. Allow this app to “Run commands in Termux” (button below or Android Settings → Apps → OpenCode Mobile → Permissions).\n" +
             "4. Tap Start. If it fails, the reason from Termux is shown here and in the log (termux.log).\n" +
             "Needs an arm64 phone. On x86_64 Android (emulators, some Chromebooks) seccomp blocks the glibc build: use the built-in mode.",
@@ -29,10 +29,11 @@ object TermuxInstall {
 
     fun script(c: Context): String = c.assets.open(ASSET).bufferedReader().use { it.readText() }
 
-    /** One paste for Termux: writes the script to $HOME and runs it with bash (stdin stays the terminal). */
+    /** One paste for Termux: clean inherited libc paths, write the script and run it (stdin stays the terminal). */
     fun pasteCommand(script: String): String {
         require(script.lines().none { it.trim() == EOF_MARK }) { "script contains the heredoc marker" }
-        return "cat > \"\$HOME/$SCRIPT_NAME\" <<'$EOF_MARK'\n" +
+        return "unset LD_LIBRARY_PATH\n" +
+            "cat > \"\$HOME/$SCRIPT_NAME\" <<'$EOF_MARK'\n" +
             script.trimEnd('\n') + "\n" +
             "$EOF_MARK\n" +
             "bash \"\$HOME/$SCRIPT_NAME\"\n"

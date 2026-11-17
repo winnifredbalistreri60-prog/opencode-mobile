@@ -64,8 +64,9 @@
 
 1. Установите Termux и откройте его один раз.
 2. В OpenCode Mobile: Настройки приложения → Режим: Termux → **«Скопировать команду установки»**. В Termux долгое нажатие → Paste, затем Enter. Скрипт сохраняется в `~/ocm-termux-install.sh`, повторный запуск безопасен и обновляет бинарник.
-   Тот же скрипт лежит в репозитории: `scripts/termux-install.sh`. Когда эта версия попадёт в `main`, можно и так:
-   `curl -fsSL https://raw.githubusercontent.com/winnifredbalistreri60-prog/opencode-mobile/main/scripts/termux-install.sh | bash`
+   Тот же скрипт лежит в репозитории: `scripts/termux-install.sh`. После публикации обновления его можно запустить так:
+   `unset LD_LIBRARY_PATH; curl -fsSL https://raw.githubusercontent.com/winnifredbalistreri60-prog/opencode-mobile/main/scripts/termux-install.sh | bash`
+   Установщик автоматически создаёт резервные копии и отключает источники `freebuff-termux` и `codebuff-termux`, если они настроены, и не использует унаследованный `LD_LIBRARY_PATH`.
 3. Разрешите приложению «запускать команды в Termux» (кнопка на экране или Настройки Android → Приложения → OpenCode Mobile → Разрешения).
 4. Нажмите «Запустить». Пароль сервера передаётся через stdin и файл 0600 в `~/.opencode-mobile/`, а не в аргументах. «Стоп» завершает только наш `opencode serve` (по pid и порту). Если запуск не удался, текст ошибки из Termux (stderr и код выхода) показывается на экране и пишется в `termux.log`.
 
