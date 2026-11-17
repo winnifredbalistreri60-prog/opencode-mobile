@@ -200,7 +200,7 @@ class TermuxScriptsTest {
     fun pasteCommandClearsInheritedLibraryPath() {
         assumeTrue(bash() != null)
         val home = Files.createTempDirectory("ocm-paste-env").toFile()
-        val command = TermuxInstall.pasteCommand("printf '%s' \"\${'$'}{LD_LIBRARY_PATH-unset}:\${'$'}{LD_PRELOAD-unset}\"\n")
+        val command = TermuxInstall.pasteCommand("printf '%s' \"\${LD_LIBRARY_PATH-unset}:\${LD_PRELOAD-unset}\"\n")
         val prefix = "export LD_LIBRARY_PATH=/tmp/foreign-codex-libs\nexport LD_PRELOAD=/tmp/foreign-codex-preload.so\n"
         val pb = ProcessBuilder(bash()!!, "-c", prefix + command)
         pb.environment()["HOME"] = home.path
@@ -208,8 +208,10 @@ class TermuxScriptsTest {
         pb.environment().remove("LD_PRELOAD")
         val p = pb.start()
         assertTrue(p.waitFor(10, TimeUnit.SECONDS))
-        assertEquals(0, p.exitValue())
-        assertEquals("unset:unset", p.inputStream.bufferedReader().readText().trim())
+        val stdout = p.inputStream.bufferedReader().readText().trim()
+        val stderr = p.errorStream.bufferedReader().readText().trim()
+        assertEquals("stdout=[$stdout] stderr=[$stderr]", 0, p.exitValue())
+        assertEquals("unset:unset", stdout)
         home.deleteRecursively()
     }
 
