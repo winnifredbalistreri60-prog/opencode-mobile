@@ -504,7 +504,7 @@ class MainActivity : ComponentActivity() {
         if (mode == RuntimeMode.REMOTE && RemoteOrigin.parse(AppPrefs.remoteUrl(this)) == null) {
             Column(modifier.padding(24.dp)) {
                 Text(
-                    RemoteOrigin.errorMessage(AppPrefs.remoteUrl(this))
+                    RemoteOrigin.errorMessage(AppPrefs.remoteUrl(this@MainActivity))
                         ?: tr("Укажите URL удалённого сервера в настройках приложения.", "Enter the remote server URL in app settings."),
                     color = MaterialTheme.colorScheme.error,
                 )
