@@ -367,8 +367,9 @@ class MainActivity : ComponentActivity() {
                                                 onFail = { userMessage = it },
                                             )
                                             RuntimeMode.REMOTE -> {
-                                                if (RemoteOrigin.parse(AppPrefs.remoteUrl(this@MainActivity)) == null) {
-                                                    userMessage = tr("Укажите URL удалённого сервера", "Enter the remote server URL")
+                                                val remoteUrl = AppPrefs.remoteUrl(this@MainActivity)
+                                                if (RemoteOrigin.parse(remoteUrl) == null) {
+                                                    userMessage = RemoteOrigin.errorMessage(remoteUrl)
                                                 } else {
                                                     dest = Dest.Session
                                                 }
@@ -502,7 +503,11 @@ class MainActivity : ComponentActivity() {
         }
         if (mode == RuntimeMode.REMOTE && RemoteOrigin.parse(AppPrefs.remoteUrl(this)) == null) {
             Column(modifier.padding(24.dp)) {
-                Text(tr("Укажите URL удалённого сервера в настройках приложения.", "Enter the remote server URL in app settings."))
+                Text(
+                    RemoteOrigin.errorMessage(AppPrefs.remoteUrl(this))
+                        ?: tr("Укажите URL удалённого сервера в настройках приложения.", "Enter the remote server URL in app settings."),
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             return
         }

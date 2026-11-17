@@ -3,24 +3,31 @@ package ru.dredd20.opencode.ui
 import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.content.Context
+import android.graphics.Color
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
+import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
+import android.webkit.SslErrorHandler
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -46,6 +53,24 @@ class OpenCodeWebView @JvmOverloads constructor(
 ) : FrameLayout(context, attrs) {
 
     val webView = WebView(context).also { addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)) }
+    private val errorMessageView = TextView(context).apply {
+        setTextColor(Color.WHITE)
+        textSize = 16f
+        gravity = Gravity.CENTER
+        setPadding(24, 12, 24, 12)
+    }
+    private val errorPanel = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        setPadding(24, 24, 24, 24)
+        setBackgroundColor(Color.rgb(40, 43, 48))
+        addView(errorMessageView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        addView(Button(context).apply {
+            text = tr("Повторить", "Retry")
+            setOnClickListener { retryConnection() }
+        }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        visibility = GONE
+    }
 
     var origin: String = ""
         private set
@@ -62,6 +87,7 @@ class OpenCodeWebView @JvmOverloads constructor(
         private set
 
     init {
+        addView(errorPanel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         configure(webView.settings)
         if (ru.dredd20.opencode.BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
         CookieManager.getInstance().setAcceptCookie(true)
@@ -89,16 +115,42 @@ class OpenCodeWebView @JvmOverloads constructor(
                 }
             }
 
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                lastError = false
+                lastErrorDescription = null
+                errorPanel.visibility = GONE
+            }
+
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
-                    lastError = true
-                    lastErrorDescription = error.description?.toString() ?: "error ${error.errorCode}"
+                    showConnectionError(networkErrorMessage(error))
                 }
             }
 
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                if (request.isForMainFrame) {
+                    val reason = response.reasonPhrase?.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+                    showConnectionError(tr(
+                        "Сервер ответил HTTP ${response.statusCode}$reason. Проверьте адрес и учётные данные.",
+                        "Server returned HTTP ${response.statusCode}$reason. Check the server URL and credentials.",
+                    ))
+                }
+            }
+
+            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
+                handler.cancel()
+                val host = Uri.parse(error.url).host.orEmpty()
+                showConnectionError(tr(
+                    "Не удалось проверить TLS-сертификат ${host.ifBlank { "сервера" }}. Проверьте сертификат и системное время.",
+                    "Could not verify the TLS certificate for ${host.ifBlank { "the server" }}. Check the certificate and device clock.",
+                ))
+            }
+
             override fun onPageFinished(view: WebView, url: String?) {
-                if (!lastError) lastErrorDescription = null
-                lastError = false
+                if (!lastError) {
+                    lastErrorDescription = null
+                    errorPanel.visibility = GONE
+                }
                 if (pendingClearHistory) {
                     view.clearHistory()
                     pendingClearHistory = false
@@ -159,6 +211,51 @@ class OpenCodeWebView @JvmOverloads constructor(
         s.cacheMode = WebSettings.LOAD_DEFAULT
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             s.isAlgorithmicDarkeningAllowed = true
+        }
+    }
+
+    private fun showConnectionError(message: String) {
+        lastError = true
+        lastErrorDescription = message
+        errorMessageView.text = message
+        errorPanel.visibility = VISIBLE
+    }
+
+    private fun retryConnection() {
+        lastError = false
+        lastErrorDescription = null
+        errorMessageView.text = tr("Повторное подключение…", "Reconnecting…")
+        errorPanel.visibility = VISIBLE
+        bind(origin, username, password, forceReload = true)
+    }
+
+    private fun networkErrorMessage(error: WebResourceError): String {
+        val host = Uri.parse(origin).host.orEmpty()
+        val target = host.ifBlank { tr("сервер", "server") }
+        return when (error.errorCode) {
+            WebViewClient.ERROR_HOST_LOOKUP -> tr(
+                "Не удалось найти адрес $target. Проверьте URL, DNS и VPN.",
+                "Could not resolve $target. Check the URL, DNS, and VPN.",
+            )
+            WebViewClient.ERROR_CONNECT -> tr(
+                "Не удалось подключиться к $target. Проверьте, что сервер запущен и доступен нужный сетевой маршрут/VPN.",
+                "Could not connect to $target. Check that the server is running and the required network route/VPN is available.",
+            )
+            WebViewClient.ERROR_TIMEOUT -> tr(
+                "Сервер $target не ответил вовремя. Проверьте соединение и повторите попытку.",
+                "$target did not respond in time. Check the connection and retry.",
+            )
+            WebViewClient.ERROR_FAILED_SSL_HANDSHAKE -> tr(
+                "Не удалось установить защищённое TLS-соединение с $target. Проверьте сертификат и системное время.",
+                "Could not establish a secure TLS connection to $target. Check the certificate and device clock.",
+            )
+            else -> {
+                val detail = error.description?.toString()?.takeIf { it.isNotBlank() }
+                tr(
+                    "Не удалось загрузить OpenCode${detail?.let { ": $it" }.orEmpty()} (код ${error.errorCode}). Проверьте сеть и адрес сервера.",
+                    "Could not load OpenCode${detail?.let { ": $it" }.orEmpty()} (error ${error.errorCode}). Check the network and server URL.",
+                )
+            }
         }
     }
 
