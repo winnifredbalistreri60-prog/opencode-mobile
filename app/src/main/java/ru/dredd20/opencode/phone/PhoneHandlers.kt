@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -276,6 +277,15 @@ class PhoneHandlers(
     }
 
     private fun notify(req: PhoneRequest): PhoneResponse {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return PhoneResponse.error(req.id, tr("нет разрешения на уведомления", "notification permission is not granted"))
+        }
+        val notifications = NotificationManagerCompat.from(context)
+        if (!notifications.areNotificationsEnabled()) {
+            return PhoneResponse.error(req.id, tr("уведомления отключены в настройках Android", "notifications are disabled in Android settings"))
+        }
         PhoneApiService.ensureChannel(context)
         val title = req.argString("title") ?: "OpenCode"
         val text = req.text()
@@ -285,7 +295,7 @@ class PhoneHandlers(
             .setContentText(text)
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify((System.currentTimeMillis() % 100000).toInt(), n)
+        notifications.notify((System.currentTimeMillis() % 100000).toInt(), n)
         return PhoneResponse.ok(req.id, mapOf("posted" to true))
     }
 

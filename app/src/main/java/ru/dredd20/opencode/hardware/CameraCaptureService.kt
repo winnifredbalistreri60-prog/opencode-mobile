@@ -40,6 +40,7 @@ class CameraCaptureService : LifecycleService() {
     private val runningTick = AtomicBoolean(false)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         goForeground()
         when (intent?.action) {
             ACTION_STOP -> {

@@ -1,13 +1,16 @@
 package ru.dredd20.opencode.serve
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -109,6 +112,9 @@ class AgentEventWatcher(private val context: Context) {
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .build()
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
         runCatching { NotificationManagerCompat.from(context).notify(NOTIFY_ID, n) }
     }
 

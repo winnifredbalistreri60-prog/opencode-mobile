@@ -1,14 +1,17 @@
 package ru.dredd20.opencode.phone
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
 import ru.dredd20.opencode.MainActivity
 import ru.dredd20.opencode.R
@@ -62,7 +65,11 @@ class NotificationConfirmer(private val context: Context) : PhoneConfirmer {
             )
             .setOngoing(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(nid, n) }
+        if (Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { NotificationManagerCompat.from(context).notify(nid, n) }
+        }
         return try {
             kotlinx.coroutines.runBlocking {
                 kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
@@ -96,7 +103,11 @@ class NotificationConfirmer(private val context: Context) : PhoneConfirmer {
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(permission.hashCode() and 0xffff, n) }
+        if (Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { NotificationManagerCompat.from(context).notify(permission.hashCode() and 0xffff, n) }
+        }
     }
 
     override fun takePicture(dest: File): Boolean {

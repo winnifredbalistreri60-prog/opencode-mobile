@@ -467,7 +467,7 @@ class MainActivity : ComponentActivity() {
     private fun SessionPane(serve: ServeState?, widthDp: Int, modifier: Modifier) {
         val mode = AppPrefs.mode(this)
         val host = webHost ?: return
-        val ru = java.util.Locale.getDefault().language == "ru"
+        val ru = LocalConfiguration.current.locales[0].language.startsWith("ru")
         val wvMajor = remember { host.webViewMajor() }
         val canPolyfill = remember { host.canInjectDocumentStart() }
         val block = WebViewSupport.blockingMessage(wvMajor, canPolyfill, ru)

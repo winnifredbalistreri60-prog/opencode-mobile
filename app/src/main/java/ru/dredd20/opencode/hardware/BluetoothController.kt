@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.BluetoothSocket
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
@@ -199,7 +200,7 @@ class BluetoothController(private val context: Context) {
         val ch = findChar(g, uuid)
         beginOp()
         val ok = if (Build.VERSION.SDK_INT >= 33) {
-            g.writeCharacteristic(ch, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothGatt.GATT_SUCCESS
+            g.writeCharacteristic(ch, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             ch.value = data
@@ -218,7 +219,7 @@ class BluetoothController(private val context: Context) {
         val desc = ch.getDescriptor(CCCD) ?: error("CCCD descriptor not found")
         val payload = if (enable) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
         val ok = if (Build.VERSION.SDK_INT >= 33) {
-            g.writeDescriptor(desc, payload) == BluetoothGatt.GATT_SUCCESS
+            g.writeDescriptor(desc, payload) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             desc.value = payload

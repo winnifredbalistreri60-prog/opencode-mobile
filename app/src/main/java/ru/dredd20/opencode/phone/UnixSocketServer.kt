@@ -8,7 +8,6 @@ import java.io.Closeable
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.StandardProtocolFamily
 import java.nio.channels.Channels
 import java.nio.channels.ServerSocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
@@ -103,10 +102,12 @@ class UnixSocketServer(private val path: File) : Closeable {
         const val ABSTRACT_NAME = "ru.dredd20.opencode.phone"
 
         internal fun openFilesystem(path: File): ServerSocketChannel? {
+            val unix = Class.forName("java.net.StandardProtocolFamily").enumConstants
+                ?.firstOrNull { it is Enum<*> && it.name == "UNIX" } ?: return null
             val open = ServerSocketChannel::class.java.methods.firstOrNull { m ->
-                m.name == "open" && m.parameterTypes.size == 1
+                m.name == "open" && m.parameterTypes.size == 1 && m.parameterTypes[0].isInstance(unix)
             } ?: return null
-            val ch = open.invoke(null, StandardProtocolFamily.UNIX) as? ServerSocketChannel ?: return null
+            val ch = open.invoke(null, unix) as? ServerSocketChannel ?: return null
             val addrClass = Class.forName("java.net.UnixDomainSocketAddress")
             val of = addrClass.getMethod("of", String::class.java)
             val addr = of.invoke(null, path.absolutePath)
